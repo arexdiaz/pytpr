@@ -1,7 +1,6 @@
+from nethelper import SocketServer
 import logging
 import socket
-import select
-import queue
 import sys
 import cmd
 import re
@@ -9,108 +8,11 @@ import re
 
 logging.basicConfig(level=logging.INFO)
 
-EXIT_CMD = " && echo _EXIT_STATUS=$? || echo _EXIT_STATUS=$?\n"
-
-class Sock():
-    def __init__(self, sock_type=None):
-        if sock_type == None:
-            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        else:
-            self.server = socket.socket(socket.AF_INET, sock_type)
-
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        self.inputs = [self.server]
-        self.outputs = []
-        self.message_queues = {}
-        self.connection = None
-        self.client_address = None
-
-    def wt_incoming(self):
-
-        self.server.listen()
-
-        readable, writable, exceptional = select.select(self.inputs, self.outputs, self.inputs)
-
-        for s in readable:
-            if s is self.server:
-                self.connection, self.client_address = self.server.accept()
-                logging.info(f"Connection established on {self.client_address}")
-
-                self.connection.setblocking(0)
-                self.connection.sendall(f"/bin/bash 2>&1\n".encode())
-                self.connection.sendall(f"echo hello{EXIT_CMD}".encode())
-
-                self.inputs.append(self.connection)
-                self.message_queues[self.connection] = queue.Queue()
-
-
-    # TODO: Figure out what I wrote a year ago
-    def send_command(self, command=None, wt_output=True):
-        """Gets data from client with proper monitoring using select() and queue for sending data.
-        """
-        output = b""
-
-        while True:
-            readable, writable, exceptional = select.select(self.inputs, self.outputs, self.inputs)
-
-            for s in readable:
-                try:
-                    data = s.recv(1024)
-                except(OSError):
-                    break
-
-                if data:
-                    logging.debug(f"Recieved data {data} from {s.getpeername()}")
-                    output = output + data
-                    if s not in self.outputs:
-                        self.outputs.append(s)
-                    if not wt_output:
-                        print(re.sub(r"_EXIT_STATUS=\w+", "", data.decode().strip()))
-
-                    if b"_EXIT_STATUS=" in data:
-                        if wt_output:
-                            return output
-                        else:
-                            return None
-                else:
-                    logging.error(f"Closing connection from {self.client_address} after reading no data")
-                    if s in self.outputs:
-                        self.outputs.remove(s)
-                    self.inputs.remove(s)
-                    s.close()
-
-                    del self.message_queues[s]
-                    return
-
-            if command and writable:
-                for s in writable:
-                    self.message_queues[s].put((command + EXIT_CMD).encode())
-                    try:
-                        next_msg = self.message_queues[s].get_nowait()
-                    except(queue.Empty):
-                        logging.debug(f"Output queue for {s.getpeername()} is empty")
-                        self.outputs.remove(s)
-                    else:
-                        logging.debug(f"Sending {next_msg} to {s.getpeername()}")
-                        s.sendall(next_msg)
-                        command = None
-
-            for s in exceptional:
-                logging.warning(f"Handling exceptional condition for {s.getpeername()}")
-                self.inputs.remove(s)
-                for s in self.outputs:
-                    self.outputs.remove(s)
-                s.close()
-
-                del self.message_queues[s]
-
-
 class NetShell(cmd.Cmd):
-    def __init__(self):
+    def __init__(self, sock):
         super(NetShell, self).__init__()
         self.prompt = "net_shell > "
-        self.sock = Sock()
+        self.sock = sock
         self.id = None
         self.output = None
 
@@ -158,35 +60,44 @@ class LocalShell(cmd.Cmd):
 
         return stop
 
-    def do_listen(self, line="localhost 4242"):
+    def do_listen(self, line):
         if not line:
             host, port = ("localhost", 4242)
         else:
             host, port = line.strip().split(" ")
 
-        self.currentSession = NetShell()
+        sock = SocketServer()
 
         try:
-            self.currentSession.sock.server.bind((host, int(port)))
+            sock.server.bind((host, int(port)))
         except(socket.error):
             logging.error("Address already in use")
-            self.currentSession = None
             return
         
         logging.info(f"Started listener on {host, port}")
 
         try:
-            self.currentSession.sock.wt_incoming()
+            sock.listen()
         except(KeyboardInterrupt):
-            self.currentSession.sock.server.close()
-            self.currentSession = None
+            sock.server.close()
             print("")
             return
+
+        try:
+            if sock.is_shell():
+                logging.error("No shell found")
+                return
+        except(BrokenPipeError):
+            sock.server.close()
+            logging.error("BrokenPipeError")
+            return
         
+
+        self.currentSession = NetShell(sock)
+
         self.sessions.append(self.currentSession)
         self.currentSession.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.currentSession.id + 1} created")
-        self.currentSession.sock.send_command("echo TESTSTRING")
         intrp(self.currentSession)
     
     def do_exit(self, line):
