@@ -8,6 +8,9 @@ logging.basicConfig(level=logging.INFO)
 
 EXIT_CMD = " && echo _EXIT_STATUS=$? || echo _EXIT_STATUS=$?\n"
 
+def strip_status(s):
+    return re.sub(r"_EXIT_STATUS=\w+", "", s.decode().strip())
+
 class SocketServer():
     def __init__(self, sock_type=None):
         if sock_type == None:
@@ -67,7 +70,7 @@ class SocketServer():
                     if s not in self.outputs:
                         self.outputs.append(s)
                     if not wt_output:
-                        print(re.sub(r"_EXIT_STATUS=\w+", "", data.decode().strip()))
+                        print(strip_status(data))
 
                     if b"_EXIT_STATUS=" in data:
                         if wt_output:

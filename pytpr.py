@@ -1,9 +1,8 @@
-from nethelper import SocketServer
+from nethelper import SocketServer, strip_status
 import logging
 import socket
 import sys
 import cmd
-import re
 
 
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +18,7 @@ class NetShell(cmd.Cmd):
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
         if self.output:
-            print(re.sub(r"_EXIT_STATUS=\w+", "", self.output.decode().strip()))
+            print(strip_status(self.output))
 
         return stop
 
@@ -48,7 +47,8 @@ class LocalShell(cmd.Cmd):
         self.prompt = "local_shell > "
         self.sessions = []
         self.currentSession = None
-
+        if len(sys.argv) > 1 and sys.argv[1] == "-l": self.do_listen(None)
+        
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished.
         """
