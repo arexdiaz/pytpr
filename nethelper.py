@@ -2,7 +2,9 @@ import logging
 import select
 import socket
 import queue
+import time
 import re
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -11,41 +13,55 @@ EXIT_CMD = " && echo _EXIT_STATUS=$? || echo _EXIT_STATUS=$?\n"
 def strip_status(s):
     return re.sub(r"_EXIT_STATUS=\w+", "", s.decode().strip())
 
-class SocketServer():
+class NetSock():
     def __init__(self, sock_type=None):
         if sock_type == None:
-            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         else:
-            self.server = socket.socket(socket.AF_INET, sock_type)
+            self.server_socket = socket.socket(socket.AF_INET, sock_type)
 
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        self.inputs = [self.server]
+        self.inputs = [self.server_socket]
         self.outputs = []
         self.message_queues = {}
-        self.connection = None
+        self.client_socket = None
         self.client_address = None
+
+    def _close_socket(self, s):
+        logging.error(f"Closing connection from {self.client_address} after reading no data")
+        if s in self.outputs:
+            self.outputs.remove(s)
+        self.inputs.remove(s)
+        s.close()
+
+        del self.message_queues[s]
+        return
 
     def listen(self):
 
-        self.server.listen()
+        self.server_socket.listen()
 
         readable, _, _ = select.select(self.inputs, self.outputs, self.inputs)
 
         for s in readable:
-            if s is self.server:
-                self.connection, self.client_address = self.server.accept()
+            if s is self.server_socket:
+                self.client_socket, self.client_address = self.server_socket.accept()
                 logging.info(f"Connection established on {self.client_address}")
 
-                self.connection.setblocking(0)
+                self.client_socket.setblocking(0)
 
-                self.inputs.append(self.connection)
-                self.message_queues[self.connection] = queue.Queue()
+                self.inputs.append(self.client_socket)
+                self.message_queues[self.client_socket] = queue.Queue()
+                
 
     def is_shell(self):
-        self.connection.sendall(f"/bin/bash 2>&1\n".encode())
-        self.connection.sendall(f"echo hello{EXIT_CMD}".encode())
-        check = self.send_command("echo test")
+        self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
+        self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
+        logging.info(f"Validating if connection has shell..")
+        time.sleep(0.1)
+        check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
+        logging.info(f"Success!")
         if not check:
             return False
 
@@ -63,7 +79,7 @@ class SocketServer():
                     data = s.recv(1024)
                 except(OSError):
                     break
-
+                
                 if data:
                     logging.debug(f"Recieved data {data} from {s.getpeername()}")
                     output = output + data
@@ -78,14 +94,7 @@ class SocketServer():
                         else:
                             return None
                 else:
-                    logging.error(f"Closing connection from {self.client_address} after reading no data")
-                    if s in self.outputs:
-                        self.outputs.remove(s)
-                    self.inputs.remove(s)
-                    s.close()
-
-                    del self.message_queues[s]
-                    return
+                    self._close_socket(s)
 
             if command and writable:
                 for s in writable:
@@ -110,4 +119,9 @@ class SocketServer():
                 del self.message_queues[s]
 
             if not readable and not writable and not exceptional:
-                return False
+                try:
+                    self.server_socket.sendall(b"")
+                except(BrokenPipeError):
+                    for s in readable:
+                        self._close_socket(s)
+                return False 
