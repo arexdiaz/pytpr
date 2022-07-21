@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
 EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
 
-def strip_status(s):
+def prettify_output(s):
     return re.sub(r"_3X1T_5TATUS=\w+", "", s.decode().strip())
 
 def sig_handler(signum, frame):
@@ -58,7 +58,7 @@ def netshell_loop(shellObj):
 class KeyboardBgInterrupt(Exception):
     pass
 
-class NetSock():
+class ServerSocket():
     def __init__(self, sock_type=None):
         if sock_type == None:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -73,15 +73,6 @@ class NetSock():
         self.client_socket = None
         self.client_address = None
 
-    def _close_socket(self, s):
-        logging.error(f"Closing connection from {self.client_address} after reading no data")
-        if s in self.outputs:
-            self.outputs.remove(s)
-        self.inputs.remove(s)
-        s.close()
-
-        del self.message_queues[s]
-        return
 
     def listen(self):
 
@@ -131,7 +122,7 @@ class NetSock():
                     if s not in self.outputs:
                         self.outputs.append(s)
                     if not wt_output:
-                        print(strip_status(data))
+                        print(prettify_output(data))
 
                     if b"_3X1T_5TATUS=" in data:
                         if wt_output:
@@ -139,7 +130,13 @@ class NetSock():
                         else:
                             return None
                 else:
-                    self._close_socket(s)
+                    if s in self.outputs:
+                        self.outputs.remove(s)
+                    self.inputs.remove(s)
+                    s.close()
+
+                    del self.message_queues[s]
+                    return
 
             if command and writable:
                 for s in writable:
@@ -155,13 +152,14 @@ class NetSock():
                         command = None
 
             for s in exceptional:
-                logging.warning(f"Handling exceptional condition for {s.getpeername()}")
-                self.inputs.remove(s)
-                for s in self.outputs:
-                    self.outputs.remove(s)
-                s.close()
+                if s.fileno() != -1:
+                    logging.warning(f"Handling exceptional condition for {s.getpeername()}")
+                    self.inputs.remove(s)
+                    for s in self.outputs:
+                        self.outputs.remove(s)
+                    s.close()
 
-                del self.message_queues[s]
+                    del self.message_queues[s]
 
             if not readable and not writable and not exceptional:
                 try:

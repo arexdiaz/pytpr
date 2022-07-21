@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from nethelper import NetSock, strip_status, netshell_loop
+from nethelper import ServerSocket, prettify_output, netshell_loop
 from threading import Thread
 import logging
 import socket
@@ -31,8 +31,6 @@ class NetShell(cmd.Cmd):
     
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
-        if self.output:
-            print(strip_status(self.output))
 
         return stop
 
@@ -48,12 +46,12 @@ class NetShell(cmd.Cmd):
             try:
                 data = self.server.client_socket.recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
                 if len(data) == 0:
-                    self.is_closed = True
-                    self.onecmd("exit")
-                    break
+                    raise OSError
             except (BlockingIOError, ConnectionResetError):
                 continue
             except OSError:
+                self.is_closed = True
+                self.onecmd("exit")
                 break
             except Exception as e:
                 logging.error("unexpected exception when checking if a socket is closed")
@@ -65,11 +63,31 @@ class NetShell(cmd.Cmd):
         <--Commands start here-->
     """
 
+    def do_ls(self, line):
+        if not line:
+            pwd = prettify_output(self.server.send_command("pwd"))
+            ls = prettify_output(self.server.send_command("ls -lA"))
+        else:
+            old_path = prettify_output(self.server.send_command("pwd"))
+            cd = prettify_output(self.server.send_command(f"cd {line}"))
+            # TODO: Fix bash crashing after using this command twice without this if statement
+            # if "no such file or directory" in cd.lower():
+            #     logging.error("No such file or directory")
+            #     return
+            pwd = prettify_output(self.server.send_command("pwd"))
+            ls = prettify_output(self.server.send_command(f"ls -lA"))
+            self.server.send_command(f"cd {old_path}")
+
+        sys.stdout.write(f"{pwd}{'=' * (len(pwd))}\n\n{ls}\n")
+
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
+        if self.output:
+            sys.stdout.write(f"prettify_output(self.output)\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from {self.server.client_address}") # TODO: client_address should be replaced with a session ID in the future
+
         self.server.client_socket.close()
         self.server.server_socket.close()
         return True
@@ -95,10 +113,6 @@ class LocalShell(cmd.Cmd):
         """Hook method executed just after a command dispatch is finished.
         """
         # TODO: Dont remove shell object instead use shellObj.is_closed variable
-        if self.currentSession and self.currentSession.is_closed:
-            self.sessions[self.currentSession.id] = None
-            logging.debug(f"Removed session {self.currentSession.id + 1} from array")
-            self.currentSession = None
 
         return stop
 
@@ -112,7 +126,7 @@ class LocalShell(cmd.Cmd):
         else:
             host, port = line.strip().split(" ")
 
-        sock = NetSock()
+        sock = ServerSocket()
 
         try:
             sock.server_socket.bind((host, int(port)))
@@ -124,15 +138,13 @@ class LocalShell(cmd.Cmd):
 
         try:
             sock.listen()
+            if sock.is_shell():
+                logging.error("No shell found")
+                return
         except KeyboardInterrupt:
             sock.server_socket.close()
             print("")
             return
-
-        try:
-            if sock.is_shell():
-                logging.error("No shell found")
-                return
         except BrokenPipeError:
             sock.server_socket.close()
             logging.error("BrokenPipeError")
@@ -149,7 +161,7 @@ class LocalShell(cmd.Cmd):
         logging.info("Exiting...")
 
         for shellObj in self.sessions:
-            if shellObj:
+            if shellObj.is_closed:
                 shellObj.server.client_socket.close()
                 shellObj.server.server_socket.close()
 
