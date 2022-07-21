@@ -1,5 +1,6 @@
 import logging
 import select
+import signal
 import socket
 import queue
 import time
@@ -8,10 +9,54 @@ import re
 
 logging.basicConfig(level=logging.INFO)
 
-EXIT_CMD = " && echo _EXIT_STATUS=$? || echo _EXIT_STATUS=$?\n"
+ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
+EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
 
 def strip_status(s):
-    return re.sub(r"_EXIT_STATUS=\w+", "", s.decode().strip())
+    return re.sub(r"_3X1T_5TATUS=\w+", "", s.decode().strip())
+
+def sig_handler(signum, frame):
+    raise KeyboardBgInterrupt
+
+def _sigtspt_check():
+    try:
+        msg = input("Put session in background? (y/n) > ")
+    except (KeyboardInterrupt, KeyboardBgInterrupt):
+        print("")
+        _sigtspt_check()
+    if msg.lower() == "y":
+        return True
+    elif msg.lower() == "n":
+        return False
+    else:
+        _sigtspt_check()
+
+def netshell_loop(shellObj):
+    signal.signal(signal.SIGTSTP, sig_handler)
+
+    if shellObj.is_closed:
+        signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
+        return
+    
+    try:
+        shellObj.cmdloop()
+    except KeyboardInterrupt:
+        print("")
+        netshell_loop(shellObj)
+    except KeyboardBgInterrupt:
+        print("")
+        msg =_sigtspt_check()
+        if msg:
+            signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
+            return
+        else:
+            netshell_loop(shellObj)
+    except BrokenPipeError:
+        signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
+        return
+
+class KeyboardBgInterrupt(Exception):
+    pass
 
 class NetSock():
     def __init__(self, sock_type=None):
@@ -88,7 +133,7 @@ class NetSock():
                     if not wt_output:
                         print(strip_status(data))
 
-                    if b"_EXIT_STATUS=" in data:
+                    if b"_3X1T_5TATUS=" in data:
                         if wt_output:
                             return output
                         else:

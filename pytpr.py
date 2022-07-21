@@ -1,4 +1,5 @@
-from nethelper import NetSock, strip_status
+#!/usr/bin/python
+from nethelper import NetSock, strip_status, netshell_loop
 from threading import Thread
 import logging
 import socket
@@ -23,7 +24,6 @@ class NetShell(cmd.Cmd):
     def precmd(self, line):
         """Hook method executed just before the command line is
         interpreted, but after the input prompt is generated and issued.
-
         """
         if self.is_closed:
             raise BrokenPipeError
@@ -35,13 +35,6 @@ class NetShell(cmd.Cmd):
             print(strip_status(self.output))
 
         return stop
-
-    def default(self, line):
-        """ Called on an input line when the command prefix is not recognized.
-        
-            Sends input line to the remote session.
-        """
-        self.output = self.server.send_command(line, wt_output=False)
 
     """
         <--CMD library ends here-->
@@ -58,23 +51,22 @@ class NetShell(cmd.Cmd):
                     self.is_closed = True
                     self.onecmd("exit")
                     break
-            except BlockingIOError:
-                continue
-            except ConnectionResetError:
+            except (BlockingIOError, ConnectionResetError):
                 continue
             except OSError:
                 break
             except Exception as e:
                 logging.error("unexpected exception when checking if a socket is closed")
                 break
+
             time.sleep(1)
 
-    def do_test(self, line):
-        """Used to test commands with multiple packets"""
-        self.output = self.server.send_command("ping 8.8.8.8 -c 4")
+    """
+        <--Commands start here-->
+    """
 
-    def do_test_conn(self, line):
-        self.output = self.server.server_socket.sendall(b"")
+    def do_run(self, line):
+        self.output = self.server.send_command(line, wt_output=False)
 
     def do_exit(self, line):
         logging.info(f"Closing connection from {self.server.client_address}") # TODO: client_address should be replaced with a session ID in the future
@@ -95,21 +87,24 @@ class LocalShell(cmd.Cmd):
 
         If this method is not overridden, it repeats the last nonempty
         command entered.
-
         """
-        if self.lastcmd:
-            return self.onecmd(self.lastcmd)
+        return None
+
 
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished.
         """
-        # Checks if the sockets file descriptor is closed
-        if self.currentSession and self.currentSession.server.client_socket.fileno() == -1:
+        # TODO: Dont remove shell object instead use shellObj.is_closed variable
+        if self.currentSession and self.currentSession.is_closed:
             self.sessions[self.currentSession.id] = None
             logging.debug(f"Removed session {self.currentSession.id + 1} from array")
             self.currentSession = None
 
         return stop
+
+    """
+        <--Commands start here-->
+    """
 
     def do_listen(self, line):
         if not line:
@@ -141,34 +136,36 @@ class LocalShell(cmd.Cmd):
         except BrokenPipeError:
             sock.server_socket.close()
             logging.error("BrokenPipeError")
-            return        
+            return
 
         self.currentSession = NetShell(sock)
 
         self.sessions.append(self.currentSession)
         self.currentSession.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.currentSession.id + 1} created")
-        signal_catch(self.currentSession)
+        netshell_loop(self.currentSession)
     
     def do_exit(self, line):
         logging.info("Exiting...")
+
+        for shellObj in self.sessions:
+            if shellObj:
+                shellObj.server.client_socket.close()
+                shellObj.server.server_socket.close()
+
         sys.exit()
 
 
-def signal_catch(shellObj):
-    try:
-        if shellObj.is_closed:
-            return
-    except AttributeError:
-        pass
-
+def _local_loop(shellObj):
     try:
         shellObj.cmdloop()
     except KeyboardInterrupt:
         print("")
-        signal_catch(shellObj)
-    except BrokenPipeError:
-        return
+        _local_loop(shellObj)
+
+def main():
+    _local_loop(LocalShell())
+
 
 if __name__ == "__main__":
-    signal_catch(LocalShell())
+    main()
