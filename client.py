@@ -16,9 +16,8 @@ class NetSocket():
         self.is_connected = True
         self.socket.sendall(b"Hello World\n")
 
-        data = self.client.recv(1024)
-
-        print(f"Received {data!r}")
+        data = self.socket.recv(1024)
+        print(f"Received {data}!")
 
 
 if __name__ == "__main__":
@@ -28,8 +27,6 @@ if __name__ == "__main__":
     client = NetSocket()
 
     while not client.is_connected:
-        try:
-            client.connect_test(HOST, PORT)
-        except:
-            continue
-    # client.socket.close()
+        client.connect_test(HOST, PORT)
+
+    client.socket.close()

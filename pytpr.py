@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from nethelper import ServerSocket, prettify_output, netshell_loop
+from nethelper import ServerSocket, pretty, netshell_loop
 from threading import Thread
 import logging
 import socket
@@ -17,7 +17,9 @@ class NetShell(cmd.Cmd):
         self.server = server
         self.id = None
         self.output = None
-        self.is_closed = False
+        self.is_open = True
+        self.is_loop = True
+        self.shell_active = True
 
         Thread(target=self._is_alive).start()
 
@@ -25,7 +27,7 @@ class NetShell(cmd.Cmd):
         """Hook method executed just before the command line is
         interpreted, but after the input prompt is generated and issued.
         """
-        if self.is_closed:
+        if not self.is_open:
             raise BrokenPipeError
         return line
     
@@ -42,18 +44,20 @@ class NetShell(cmd.Cmd):
         """ Checks if socket is alive
             https://stackoverflow.com/questions/48024720/python-how-to-check-if-socket-is-still-connected
         """
-        while True:
+        while self.is_loop:
             try:
                 data = self.server.client_socket.recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
                 if len(data) == 0:
                     raise OSError
-            except (BlockingIOError, ConnectionResetError):
+            except BlockingIOError:
                 continue
-            except OSError:
-                self.is_closed = True
-                self.onecmd("exit")
+            except OSError as e:
+                logging.error(f"Session {self.id +1}: BrokenPipeError")
+                self.is_open = False
+                self.server.client_socket.close()
+                self.server.server_socket.close()
                 break
-            except Exception as e:
+            except Exception:
                 logging.error("unexpected exception when checking if a socket is closed")
                 break
 
@@ -65,20 +69,19 @@ class NetShell(cmd.Cmd):
 
     def do_ls(self, line):
         if not line:
-            pwd = prettify_output(self.server.send_command("pwd"))
-            ls = prettify_output(self.server.send_command("ls -lA"))
+            pwd = pretty(self.server.send_command("pwd"))
+            ls = pretty(self.server.send_command("ls -la"))
         else:
-            old_path = prettify_output(self.server.send_command("pwd"))
-            cd = prettify_output(self.server.send_command(f"cd {line}"))
-            # TODO: Fix bash crashing after using this command twice without this if statement
-            # if "no such file or directory" in cd.lower():
-            #     logging.error("No such file or directory")
-            #     return
-            pwd = prettify_output(self.server.send_command("pwd"))
-            ls = prettify_output(self.server.send_command(f"ls -lA"))
-            self.server.send_command(f"cd {old_path}")
+            old_path = pretty(self.server.send_command("pwd"))
+            cd = pretty(self.server.send_command(f"cd {line}"))
+            if "no such file or directory" in cd.lower():
+                logging.error("No such file or directory")
+                return
+            pwd = pretty(self.server.send_command("pwd"))
+            ls = pretty(self.server.send_command(f"ls -la"))
+            self.server.send_command(f"cd {old_path}".strip())
 
-        sys.stdout.write(f"{pwd}{'=' * (len(pwd))}\n\n{ls}\n")
+        sys.stdout.write(f"{pwd}\n{'=' * (len(pwd))}\n\n{ls}\n\n")
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -86,8 +89,9 @@ class NetShell(cmd.Cmd):
             sys.stdout.write(f"prettify_output(self.output)\n")
 
     def do_exit(self, line):
-        logging.info(f"Closing connection from {self.server.client_address}") # TODO: client_address should be replaced with a session ID in the future
+        logging.info(f"Closing connection from session {self.id +1}")
 
+        self.is_loop = False
         self.server.client_socket.close()
         self.server.server_socket.close()
         return True
@@ -98,7 +102,8 @@ class LocalShell(cmd.Cmd):
         self.prompt = "local_shell > "
         self.sessions = []
         self.currentSession = None
-        if len(sys.argv) > 1 and sys.argv[1] == "-l": self.do_listen(None)
+        if len(sys.argv) > 1 and sys.argv[1] == "-l":
+            self.do_listen(None)
         
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
@@ -108,11 +113,9 @@ class LocalShell(cmd.Cmd):
         """
         return None
 
-
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished.
         """
-        # TODO: Dont remove shell object instead use shellObj.is_closed variable
 
         return stop
 
@@ -157,23 +160,45 @@ class LocalShell(cmd.Cmd):
         logging.info(f"Session {self.currentSession.id + 1} created")
         netshell_loop(self.currentSession)
     
+    def do_sessions(self, line):
+        args = line.split(" ")
+        if args and "-i" in args[0]:
+            try:
+                index = int(args[1])
+            except ValueError:
+                logging.error("Index must be int")
+                return
+            if index:
+                if index > len(self.sessions):
+                    logging.error("Sesssion not found")
+                    return
+            netshell_loop(self.sessions[index -1])
+            return
+
+        for netShell in self.sessions:
+            # TODO: Format this
+            sys.stdout.write(f"Session {netShell.id +1} | IP address {netShell.server.client_address[0]} "
+                            f"| Port {netShell.server.server_socket.getsockname()[1]} | Open: {netShell.is_open}\n")
+        sys.stdout.write("\n")
+
     def do_exit(self, line):
         logging.info("Exiting...")
 
-        for shellObj in self.sessions:
-            if shellObj.is_closed:
-                shellObj.server.client_socket.close()
-                shellObj.server.server_socket.close()
+        for netShell in self.sessions:
+            if netShell.is_open:
+                netShell.is_loop = False
+                netShell.server.client_socket.close()
+                netShell.server.server_socket.close()
 
         sys.exit()
 
 
-def _local_loop(shellObj):
+def _local_loop(localShell):
     try:
-        shellObj.cmdloop()
+        localShell.cmdloop()
     except KeyboardInterrupt:
         print("")
-        _local_loop(shellObj)
+        _local_loop(localShell)
 
 def main():
     _local_loop(LocalShell())

@@ -12,8 +12,9 @@ logging.basicConfig(level=logging.INFO)
 ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
 EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
 
-def prettify_output(s):
-    return re.sub(r"_3X1T_5TATUS=\w+", "", s.decode().strip())
+def pretty(s):
+    s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode())
+    return s.strip()
 
 def sig_handler(signum, frame):
     raise KeyboardBgInterrupt
@@ -34,7 +35,7 @@ def _sigtspt_check():
 def netshell_loop(shellObj):
     signal.signal(signal.SIGTSTP, sig_handler)
 
-    if shellObj.is_closed:
+    if not shellObj.is_open:
         signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
         return
     
@@ -122,7 +123,7 @@ class ServerSocket():
                     if s not in self.outputs:
                         self.outputs.append(s)
                     if not wt_output:
-                        print(prettify_output(data))
+                        print(pretty(data))
 
                     if b"_3X1T_5TATUS=" in data:
                         if wt_output:
@@ -161,10 +162,10 @@ class ServerSocket():
 
                     del self.message_queues[s]
 
-            if not readable and not writable and not exceptional:
-                try:
-                    self.server_socket.sendall(b"")
-                except(BrokenPipeError):
-                    for s in readable:
-                        self._close_socket(s)
-                return False 
+            # if not readable and not writable and not exceptional:
+            #     try:
+            #         self.server_socket.sendall(b"")
+            #     except(BrokenPipeError):
+            #         for s in readable:
+            #             self._close_socket(s)
+            #     return False 
