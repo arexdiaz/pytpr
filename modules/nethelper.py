@@ -4,17 +4,12 @@ import signal
 import socket
 import queue
 import time
-import re
 
 
 logging.basicConfig(level=logging.INFO)
 
 ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
 EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
-
-def pretty(s):
-    s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode())
-    return s.strip()
 
 def sig_handler(signum, frame):
     raise KeyboardBgInterrupt
@@ -106,8 +101,8 @@ class ServerSocket():
             return False
         return True
 
-    # TODO: Figure out what I wrote a year ago
-    # NOTE: What the hell is this
+    # TODO: 06/2022: Figure out what I wrote a year ago
+    # NOTE: 07/2023: What the hell is this
     def send_command(self, command=None, wt_output=True):
         """Gets data from client with proper monitoring using select() and queue for sending data.
         """

