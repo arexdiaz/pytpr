@@ -61,7 +61,7 @@ def send_file(file_name, ip, port):
 
 def chk_payload(project_dir):
     # Get the project directory (assuming this script is in the project directory)
-    payload_dir = os.path.join(project_dir, 'payloads')
+    payload_dir = os.path.join(project_dir, "payloads")
 
     # Make sure the payloads directory exists
     if not os.path.exists(payload_dir):
@@ -74,8 +74,8 @@ def chk_payload(project_dir):
         logging.info(f"Compiling '{source_file}' using PyInstaller...")
 
         try:
-            with open(os.devnull, 'w') as devnull:
-                subprocess.check_call(['pyinstaller', '-y', '--clean', '--onefile', source_file], stdout=devnull, stderr=devnull)
+            with open(os.devnull, "w") as devnull:
+                subprocess.check_call(["pyinstaller", "-y", "--clean", "--onefile", source_file], stdout=devnull, stderr=devnull)
             
             # Move the compiled binary to the payloads directory
             shutil.move("./dist/" + os.path.basename(source_file).split(".")[0], payload_file)
