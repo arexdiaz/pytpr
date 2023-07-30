@@ -96,10 +96,12 @@ class ServerSocket():
         if py_state == 0:
             self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
         self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
-        logging.info(f"Validating if connection has shell..")
+        print("INFO:root:Validating if connection has shell.. ", end="")
+        # logging.info(f"Validating if connection has shell..")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
-        logging.info(f"Success!")
+        # logging.info("Success!")
+        print("Success!")
         if not check:
             return False
         return True
