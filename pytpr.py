@@ -13,6 +13,7 @@ import os
 
 
 logging.basicConfig(level=logging.INFO)
+sys.dont_write_bytecode = True
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -112,9 +113,10 @@ class LocalShell(cmd.Cmd):
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
         
-        if not os.path.isfile('payload'):
+        project_dir = os.path.dirname(os.path.realpath(__file__))
+        if not os.path.isfile(os.path.join(project_dir, "payloads/payload")):
             logging.warning('Warning: Binary file "payload" is not present.')
-            chk_payload()
+            chk_payload(project_dir)
 
         
     def emptyline(self):

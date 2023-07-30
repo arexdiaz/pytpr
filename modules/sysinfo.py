@@ -1,5 +1,6 @@
 from modules.utils import pretty
 
+
 class SystemInfoGatherer:
     def __init__(self):
         # System info

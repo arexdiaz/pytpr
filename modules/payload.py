@@ -1,5 +1,6 @@
-import socket
 import subprocess
+import socket
+
 
 def connect_to_host(host, port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
