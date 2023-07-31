@@ -5,23 +5,11 @@ import logging
 import socket
 import shutil
 import os
-import re
 
 
 logging.basicConfig(level=logging.INFO)
 
-def pretty(s):
-    s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode()).strip()
-    if s:
-        return s
-    else:
-        return None
-
-def listen(line, py_state):
-    if not line:
-        host, port = ("localhost", 4242)
-    else:
-        host, port = line.strip().split(" ")
+def listen(host, port, py_state):
 
     sock = ServerSocket()
 

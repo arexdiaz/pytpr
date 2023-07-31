@@ -4,12 +4,19 @@ import signal
 import socket
 import queue
 import time
-
+import re
 
 logging.basicConfig(level=logging.INFO)
 
 ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
 EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
+
+def pretty(s):
+    s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode()).strip()
+    if s:
+        return s
+    else:
+        return None
 
 def sig_handler(signum, frame):
     raise KeyboardBgInterrupt
@@ -92,10 +99,8 @@ class ServerSocket():
             self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
         self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
         print("INFO:root:Validating if connection has shell.. ", end="")
-        # logging.info(f"Validating if connection has shell..")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
-        # logging.info("Success!")
         print("Success!")
         if not check:
             return False

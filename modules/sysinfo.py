@@ -1,4 +1,4 @@
-from modules.utils import pretty
+from modules.nethelper import pretty
 
 
 class SystemInfoGatherer:
