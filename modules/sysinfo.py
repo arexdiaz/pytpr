@@ -1,4 +1,5 @@
-from modules.utils import pretty
+from modules.nethelper import pretty
+
 
 class SystemInfoGatherer:
     def __init__(self):
@@ -69,6 +70,8 @@ class SystemInfoGatherer:
         self.is_gdb = None
         self.is_strace = None
         self.is_netcat = None
+        self.is_ncat = None
+        self.is_nc = None
         self.is_bash_shell = None
         self.is_perl_shell = None
         self.is_python = None
@@ -145,7 +148,9 @@ class SystemInfoGatherer:
         self.is_postgres = pretty(sock.send_command("which postgres"))
         self.is_gdb = pretty(sock.send_command("which gdb"))
         self.is_strace = pretty(sock.send_command("which strace"))
-        self.is_netcat = pretty(sock.send_command("which nc"))
+        self.is_netcat = pretty(sock.send_command("which netcat"))
+        self.is_ncat = pretty(sock.send_command("which ncat"))
+        self.is_nc = pretty(sock.send_command("which nc"))
         self.is_bash_shell = pretty(sock.send_command("which bash"))
         self.is_perl_shell = pretty(sock.send_command("which perl"))
         self.is_python = pretty(sock.send_command("which python"))
