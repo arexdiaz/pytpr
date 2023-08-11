@@ -104,7 +104,7 @@ class ServerSocket():
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
         print("ok!")
         if check:
-            self.is_python = self.send_command("DEADBEEF1337")
+            self.is_python = pretty(self.send_command("DEADBEEF1337"))
             return True
         else:
             return False
@@ -138,6 +138,8 @@ class ServerSocket():
                             return output
                         else:
                             return None
+                    if self.is_python == "1":
+                        return data
                 else:
                     if s in self.outputs:
                         self.outputs.remove(s)
@@ -149,7 +151,10 @@ class ServerSocket():
 
             if command and writable:
                 for s in writable:
-                    self.message_queues[s].put((command + EXIT_CMD).encode())
+                    if self.is_python == "1":
+                        self.message_queues[s].put((command).encode())
+                    else:
+                        self.message_queues[s].put((command + EXIT_CMD).encode())
                     try:
                         next_msg = self.message_queues[s].get_nowait()
                     except(queue.Empty):

