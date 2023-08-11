@@ -149,7 +149,7 @@ class LocalShell(cmd.Cmd):
 
     def do_listen(self, line):
         if not line:
-            host, port = ("localhost", 4242)
+            host, port = ("0.0.0.0", 4242)
         else:
             host, port = line.strip().split(" ")
 
@@ -157,7 +157,7 @@ class LocalShell(cmd.Cmd):
         sock.sysinfo = SystemInfoGatherer()
         sock.sysinfo.binaryGatherer(sock)
 
-        if not sock:
+        if not sock: 
             return
         
         # TODO: Make it so that if there 
