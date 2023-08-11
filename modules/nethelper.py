@@ -70,6 +70,7 @@ class ServerSocket():
 
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        self.is_python = "0"
         self.inputs = [self.server_socket]
         self.outputs = []
         self.message_queues = {}
@@ -101,10 +102,12 @@ class ServerSocket():
         print("INFO:root:Validating if connection has shell.. ", end="")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
-        print("Success!")
-        if not check:
+        print("ok!")
+        if check:
+            self.is_python = self.send_command("DEADBEEF1337")
+            return True
+        else:
             return False
-        return True
 
     # TODO: 06/2022: Figure out what I wrote a year ago
     # NOTE: 07/2023: What the hell is this
