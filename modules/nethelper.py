@@ -98,13 +98,14 @@ class ServerSocket():
     def is_shell(self, py_state):
         if py_state == 0:
             self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
-        self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
+            self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
+        else:
+            self.is_python = pretty(self.send_command("DEADBEEF1337"))
         print("INFO:root:Validating if connection has shell.. ", end="")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
         print("ok!")
         if check:
-            self.is_python = pretty(self.send_command("DEADBEEF1337"))
             return True
         else:
             return False
