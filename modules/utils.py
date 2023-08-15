@@ -17,7 +17,7 @@ def listen(host, port, py_state):
         sock.server_socket.bind((host, int(port)))
     except socket.error:
         logging.error("Address already in use")
-        return
+        raise 
     
     logging.info(f"Started listener on {host, port}")
 
