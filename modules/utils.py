@@ -1,4 +1,4 @@
-from modules.nethelper import ServerSocket
+from modules.nethelper import BashServerSocket, PyServerSocket
 from base64 import b64encode
 import subprocess
 import logging
@@ -10,8 +10,10 @@ import os
 logging.basicConfig(level=logging.INFO)
 
 def listen(host, port, py_state):
-
-    sock = ServerSocket()
+    if not py_state:
+        sock = BashServerSocket()
+    else:
+        sock = PyServerSocket()
 
     try:
         sock.server_socket.bind((host, int(port)))
@@ -23,7 +25,7 @@ def listen(host, port, py_state):
 
     try:
         sock.listen()
-        if not sock.is_shell(py_state):
+        if not sock.is_shell():
             logging.error("No shell found")
             return
     except KeyboardInterrupt:

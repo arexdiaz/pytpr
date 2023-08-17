@@ -12,7 +12,10 @@ ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
 EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
 
 def pretty(s):
-    s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode()).strip()
+    try:
+        s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode()).strip()
+    except AttributeError:
+        pass
     if s:
         return s
     else:
@@ -61,7 +64,7 @@ def netshell_loop(shellObj):
 class KeyboardBgInterrupt(Exception):
     pass
 
-class ServerSocket():
+class BashServerSocket():
     def __init__(self, sock_type=None):
         if sock_type == None:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,7 +90,7 @@ class ServerSocket():
         for s in readable:
             if s is self.server_socket:
                 self.client_socket, self.client_address = self.server_socket.accept()
-                logging.info(f"Connection established on {self.client_address}")
+                logging.info(f"Connection established with {self.client_address}")
 
                 self.client_socket.setblocking(0)
 
@@ -95,13 +98,9 @@ class ServerSocket():
                 self.message_queues[self.client_socket] = queue.Queue()
                 
 
-    def is_shell(self, py_state):
-        if py_state == 0:
-            self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
-            self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
-        else:
-            # TODO: Encryption starts here
-            self.is_python = pretty(self.send_command("HarmoniousJazzPlaysSoftly"))
+    def is_shell(self):
+        self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
+        self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
         print("INFO:root:Validating if connection has shell.. ", end="")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
@@ -186,3 +185,46 @@ class ServerSocket():
             #         for s in readable:
             #             self._close_socket(s)
             #     return False 
+
+class PyServerSocket():
+    def __init__(self, sock_type=socket.SOCK_STREAM):
+        self.server_socket = socket.socket(socket.AF_INET, sock_type)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.client_socket = None
+        self.client_address = None
+
+    def listen(self):
+        self.server_socket.listen(1)
+        self.client_socket, self.client_address = self.server_socket.accept()
+        logging.info(f"Connection established with {self.client_address}")
+
+    def is_shell(self):
+        # TODO: Encryption starts here
+        self.is_python = self.send_command("HarmoniousJazzPlaysSoftly")
+        print("INFO:root:Validating if connection has shell.. ", end="")
+        time.sleep(0.1)
+        check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
+        print("ok!")
+        if check:
+            return True
+        else:
+            return False
+
+    def validate_python_client(self):
+        challenge = "Are you a Python client?"
+        self.client_socket.sendall(challenge.encode())
+        response = self.client_socket.recv(1024).decode()
+
+        if response == "Yes, I am a Python client.":
+            return True
+        else:
+            return False
+
+    def send_command(self, command):
+        self.client_socket.sendall(command.encode())
+        data = self.client_socket.recv(1024)
+        return data.decode()
+
+    def close(self):
+        self.client_socket.close()
+        self.server_socket.close()
