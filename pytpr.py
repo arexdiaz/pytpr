@@ -106,7 +106,7 @@ class NetShell(cmd.Cmd):
     def do_run(self, line):
         self.output = self.server.send_command(line)
         if self.output:
-            sys.stdout.write(f"prettify_output(self.output)\n")
+            sys.stdout.write(f"{pretty(self.output)}\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
@@ -176,7 +176,7 @@ class LocalShell(cmd.Cmd):
             sock = listen(host, port, 1)
             if not sock:
                 return
-            sock.client_socket.send(b"rm -rf payload")
+            sock.send_command("rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
 

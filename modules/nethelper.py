@@ -222,8 +222,18 @@ class PyServerSocket():
 
     def send_command(self, command):
         self.client_socket.sendall(command.encode())
-        data = self.client_socket.recv(1024)
-        return data.decode()
+        data_length_bytes = self.client_socket.recv(4)
+        data_length = int.from_bytes(data_length_bytes, byteorder="big")
+        data_bytes = bytearray()
+
+        while len(data_bytes) < data_length:
+            chunk = self.client_socket.recv(data_length - len(data_bytes))
+            if chunk == b"":
+                raise RuntimeError("socket connection broken")
+            data_bytes.extend(chunk)
+
+        data = data_bytes.decode()
+        return data
 
     def close(self):
         self.client_socket.close()
