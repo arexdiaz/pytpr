@@ -200,22 +200,10 @@ class PyServerSocket():
 
     def is_shell(self):
         # TODO: Encryption starts here
-        self.is_python = self.send_command("HarmoniousJazzPlaysSoftly")
+        self.is_python = self.send_command("echo hello")
         print("INFO:root:Validating if connection has shell.. ", end="")
-        time.sleep(0.1)
-        check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
         print("ok!")
-        if check:
-            return True
-        else:
-            return False
-
-    def validate_python_client(self):
-        challenge = "Are you a Python client?"
-        self.client_socket.sendall(challenge.encode())
-        response = self.client_socket.recv(1024).decode()
-
-        if response == "Yes, I am a Python client.":
+        if self.is_python:
             return True
         else:
             return False

