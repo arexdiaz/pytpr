@@ -181,7 +181,7 @@ class LocalShell(cmd.Cmd):
             sock = listen(host, port, 1)
             if not sock:
                 return
-            sock.send_command("rm -rf payload")
+            # sock.send_command("rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
 
