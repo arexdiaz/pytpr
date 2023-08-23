@@ -1,11 +1,19 @@
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import serialization, padding, hashes
+from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.backends import default_backend
+
 from modules.utils import NO_OUTPUT_SIGNAL
 import logging
 import select
 import signal
 import socket
 import queue
+import json
 import time
 import re
+import os
 
 logging.basicConfig(level=logging.INFO)
 
@@ -217,6 +225,60 @@ class BashServerSocket():
             #             self._close_socket(s)
             #     return False 
 
+class Encryption():
+    def __init__(self):
+        GEN = 2
+        KEY_SIZE = 2048
+        self.parameters = dh.generate_parameters(generator=GEN, key_size=KEY_SIZE)
+        self.p = self.parameters.parameter_numbers().p
+        self.g = self.parameters.parameter_numbers().g
+
+    def generate_shared_secret(self, client, p, g):
+        server_pk = self.parameters.generate_private_key()
+
+        # Prepare server public key to send to client
+        server_pub_pem = server_pk.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        
+        client.send(server_pub_pem)
+
+        # Receive client's public key from the client
+        client_public_key_pem = client.recv(1024)
+        client_public_key = serialization.load_pem_public_key(client_public_key_pem)
+        # Generate the shared secret
+        return server_pk.exchange(client_public_key)
+    
+    def encrypt_message(self, message, derived_key):
+        # Create an AES Cipher context with the derived key and a random IV
+        iv = os.urandom(12)  # GCM uses a 12-byte IV
+        cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+
+        # Encrypt the message and get the tag
+        padder = padding.PKCS7(128).padder()
+        padded_message = padder.update(message.encode()) + padder.finalize()
+        ciphertext = encryptor.update(padded_message) + encryptor.finalize()
+        tag = encryptor.tag
+
+        return iv + ciphertext + tag
+    
+    def decrypt_message(self, data, derived_key):
+        iv = data[:12]  # GCM uses a 12-byte IV
+        ciphertext = data[12:-16]  # assuming a 16-byte tag
+        tag = data[-16:]
+
+        # Create an AES Cipher context with the derived key and the received IV
+        cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv, tag), backend=default_backend())
+        decryptor = cipher.decryptor()
+
+        # Decrypt the ciphertext and remove the padding
+        decrypted_message = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return unpadder.update(decrypted_message) + unpadder.finalize()
+
+
 class PyServerSocket():
     def __init__(self, sock_type=socket.SOCK_STREAM):
         self.server_socket = socket.socket(socket.AF_INET, sock_type)
@@ -224,23 +286,35 @@ class PyServerSocket():
         self.client_socket = None
         self.client_address = None
 
+        self.enc = Encryption()
+
     def listen(self):
         self.server_socket.listen(1)
         self.client_socket, self.client_address = self.server_socket.accept()
         logging.info(f"Connection established with {self.client_address}")
 
     def is_shell(self):
-        # TODO: Encryption starts here
-        self.is_python = self.send_command("HAR")
-        print("INFO:root:Validating if connection has shell.. ", end="")
-        print("ok!")
-        if self.is_python:
+        self.client_socket.send(json.dumps({'p': self.enc.p, 'g': self.enc.g}).encode())
+        logging.info("Validating if connection has shell..")
+        check = pretty(self.send_command("echo hello"))
+        if check == "hello":
             return True
         else:
             return False
 
     def send_command(self, command):
-        self.client_socket.sendall(command.encode())
+        chunk = b""
+        derived_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'handshake data',
+        ).derive(self.enc.generate_shared_secret(self.client_socket,
+                                                 self.enc.p,self.enc.g))
+
+        encrypted_message = self.enc.encrypt_message(command, derived_key)
+
+        self.client_socket.sendall(encrypted_message)
         data_length_bytes = self.client_socket.recv(4)
         data_length = int.from_bytes(data_length_bytes, byteorder="big")
         data_bytes = bytearray()
@@ -251,8 +325,7 @@ class PyServerSocket():
                 raise RuntimeError("socket connection broken")
             data_bytes.extend(chunk)
 
-        data = data_bytes.decode()
-        return data
+        return self.enc.decrypt_message(chunk, derived_key)
 
     def close(self):
         self.client_socket.close()

