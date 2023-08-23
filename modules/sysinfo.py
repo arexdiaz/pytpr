@@ -81,6 +81,7 @@ class SystemInfoGatherer:
         self.is_socat = None
         self.is_telnet = None
         self.is_openssl = None
+        self.is_sleep = None
 
     def sysGatherer(self, sock):
         self.system_info = pretty(sock.send_command("uname -a"))
@@ -160,3 +161,5 @@ class SystemInfoGatherer:
         self.is_socat = pretty(sock.send_command("which socat"))
         self.is_telnet = pretty(sock.send_command("which telnet"))
         self.is_openssl = pretty(sock.send_command("which openssl"))
+        self.is_sleep = pretty(sock.send_command("which sleep"))
+        self.is_base64 = pretty(sock.send_command("which base64"))

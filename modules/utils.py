@@ -1,4 +1,3 @@
-from modules.nethelper import ServerSocket
 from base64 import b64encode
 import subprocess
 import logging
@@ -9,33 +8,7 @@ import os
 
 logging.basicConfig(level=logging.INFO)
 
-def listen(host, port, py_state):
-
-    sock = ServerSocket()
-
-    try:
-        sock.server_socket.bind((host, int(port)))
-    except socket.error:
-        logging.error("Address already in use")
-        return
-    
-    logging.info(f"Started listener on {host, port}")
-
-    try:
-        sock.listen()
-        if not sock.is_shell(py_state):
-            logging.error("No shell found")
-            return
-    except KeyboardInterrupt:
-        sock.server_socket.close()
-        print("")
-        return
-    except BrokenPipeError:
-        sock.server_socket.close()
-        logging.error("BrokenPipeError")
-        return
-
-    return sock
+NO_OUTPUT_SIGNAL = "__INTERNAL__NO_OUTPUT_SIGNAL_123$%^&"
 
 def send_file(file_name, ip, port):
     with open(file_name, "rb") as f:
