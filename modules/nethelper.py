@@ -1,3 +1,4 @@
+from modules.utils import NO_OUTPUT_SIGNAL
 import logging
 import select
 import signal
@@ -16,7 +17,7 @@ def pretty(s):
         s = re.sub(r"_3X1T_5TATUS=\w+", "", s.decode()).strip()
     except AttributeError:
         pass
-    if s:
+    if s and s != NO_OUTPUT_SIGNAL:
         return s
     else:
         return None
@@ -36,6 +37,36 @@ def _sigtspt_check():
         return False
     else:
         _sigtspt_check()
+
+def listen(host, port, py_state):
+    if not py_state:
+        sock = BashServerSocket()
+    else:
+        sock = PyServerSocket()
+
+    try:
+        sock.server_socket.bind((host, int(port)))
+    except socket.error:
+        logging.error("Address already in use")
+        raise 
+    
+    logging.info(f"Started listener on {host, port}")
+
+    try:
+        sock.listen()
+        if not sock.is_shell():
+            logging.error("No shell found")
+            return
+    except KeyboardInterrupt:
+        sock.server_socket.close()
+        print("")
+        return
+    except BrokenPipeError:
+        sock.server_socket.close()
+        logging.error("BrokenPipeError")
+        return
+
+    return sock
 
 def netshell_loop(shellObj):
     signal.signal(signal.SIGTSTP, sig_handler)
@@ -200,7 +231,7 @@ class PyServerSocket():
 
     def is_shell(self):
         # TODO: Encryption starts here
-        self.is_python = self.send_command("echo hello")
+        self.is_python = self.send_command("HAR")
         print("INFO:root:Validating if connection has shell.. ", end="")
         print("ok!")
         if self.is_python:

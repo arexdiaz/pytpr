@@ -1,11 +1,12 @@
+from utils import NO_OUTPUT_SIGNAL
 import subprocess
 import argparse
 import select
 import socket
-import time
 import os
 
 # Constants
+
 SENDING_FILE = b"sendingfile"
 GETTING_FILE = b"gettingfile"
 
@@ -30,9 +31,9 @@ def send_file(filename, sock):
 def change_directory(cmd, folder, s):
     try:
         os.chdir(folder)
-        stdout_value = b"INFO: no output"
+        stdout_value = NO_OUTPUT_SIGNAL.encode()
     except FileNotFoundError:
-        stdout_value = f"ERROR: File {folder} not found".encode()
+        stdout_value = f"error: {folder} not found".encode()
     finally:
         message_length = len(stdout_value)
         s.sendall(message_length.to_bytes(4, byteorder="big"))
@@ -81,37 +82,37 @@ class Shell:
                     if self.end_marker.encode() in chunk:
                         return out[:-len(self.end_marker)], err
 
-def execute_command(data, shell):
+def execute_command(data, shell, socket):
     """Executes a command and sends the response back through the socket."""
-    stdout_value, stderr_value = shell.execute_command(data.decode("utf-8")).decode()
-    msg = f"{stdout_value}\n{stderr_value}"
+    stdout_value, stderr_value = shell.execute_command(data.decode("utf-8"))
+    msg = f"{stdout_value.decode()}{stderr_value.decode()}".encode()
     message_length = len(msg)
     
-    send_response(msg, message_length)
+    send_response(msg, socket, message_length)
 
-def send_response(s, msg, message_length):
+def send_response(msg, socket, message_length):
     if message_length > 0:
-        s.sendall(message_length.to_bytes(4, byteorder="big"))
-        s.sendall(msg)
+        socket.sendall(message_length.to_bytes(4, byteorder="big"))
+        socket.sendall(msg)
     else:
-        stdout_value = b"INFO: no output"
+        stdout_value = NO_OUTPUT_SIGNAL.encode()
         message_length = len(stdout_value)
-        s.sendall(message_length.to_bytes(4, byteorder="big"))
-        s.sendall(stdout_value)
+        socket.sendall(message_length.to_bytes(4, byteorder="big"))
+        socket.sendall(stdout_value)
 
-def execute_command(s):
+def netloop(socket):
     """Receives commands from the socket, executes them and sends back the response."""
     shell = Shell()
     while True:
-        data = s.recv(1024)
+        data = socket.recv(1024)
 
         if not data:
             break
-        if handle_file_transfers(data, s):
+        if handle_file_transfers(data, socket):
             continue
 
         try:
-            execute_command_and_send_response(data, s, shell)
+            execute_command(data, shell, socket)
         except BrokenPipeError:
             print("Connection closed by the host.")
             break
@@ -124,8 +125,8 @@ def main():
 
     args = parser.parse_args()
 
-    s = connect_to_host(args.host, args.port)
-    execute_command(s)
+    socket = connect_to_host(args.host, args.port)
+    netloop(socket)
 
 if __name__ == "__main__":
     main()

