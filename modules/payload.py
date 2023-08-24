@@ -1,8 +1,4 @@
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import serialization, padding, hashes
-from cryptography.hazmat.primitives.asymmetric import dh
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.backends import default_backend
+from crypt import ClientPyEncryption
 from utils import NO_OUTPUT_SIGNAL
 import subprocess
 import argparse
@@ -45,64 +41,6 @@ class Shell:
                     if self.end_marker.encode() in chunk:
                         return out[:-len(self.end_marker)], err
 
-class Encryption():
-    def __init__(self):
-        self.parameters = None
-        self.derived_key = None
-
-    def get_params(self, s):
-        parameters_json = s.recv(1024)
-        parameters_dict = json.loads(parameters_json.decode())
-        p = parameters_dict['p']
-        g = parameters_dict['g']
-        return dh.DHParameterNumbers(p, g).parameters(default_backend())
-    
-    def get_derived_key(self, parameters, socket):
-        client_private_key = parameters.generate_private_key()
-
-        client_public_key_pem = client_private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        socket.send(client_public_key_pem)
-
-        server_public_key_pem = socket.recv(1024)
-        server_public_key = serialization.load_pem_public_key(server_public_key_pem)
-        shared_key = client_private_key.exchange(server_public_key)
-        return HKDF(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=None,
-                info=b'handshake data',
-            ).derive(shared_key)
-
-    def encrypt_message(self, data, derived_key):
-            iv = os.urandom(12)
-            cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv), backend=default_backend())
-            encryptor = cipher.encryptor()
-            padder = padding.PKCS7(128).padder()
-            padded_message = padder.update(data) + padder.finalize()
-            ciphertext = encryptor.update(padded_message) + encryptor.finalize()
-            tag = encryptor.tag
-            message = iv + ciphertext + tag
-            message_length = len(message)
-            return message_length, message
-
-    def decrypt_message(self, data, derived_key):
-        iv = data[:12]  # GCM uses a 12-byte IV
-        ciphertext = data[12:-16]  # assuming a 16-byte tag
-        tag = data[-16:]
-
-        # Create an AES Cipher context with the derived key and the received IV
-        cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv, tag), backend=default_backend())
-        decryptor = cipher.decryptor()
-
-        # Decrypt the ciphertext and remove the padding
-        decrypted_message = decryptor.update(ciphertext) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        return unpadder.update(decrypted_message) + unpadder.finalize()
-
-
 class NetManager:
     def __init__(self, host, port):
         self.host = host
@@ -115,7 +53,7 @@ class NetManager:
                 continue
             break
         self.shell = Shell()
-        self.enc = Encryption()
+        self.enc = ClientPyEncryption()
 
     def connect_to_host(self):
         """Establishes a connection to the host."""
@@ -183,9 +121,11 @@ class NetManager:
         self.enc.parameters = self.enc.get_params(self.socket)
 
         while True:
-            self.enc.derived_key = self.enc.get_derived_key(self.enc.parameters, self.socket)
+            try:
+                self.enc.derived_key = self.enc.get_derived_key(self.enc.parameters, self.socket)
+            except ConnectionResetError:
+                break
             data = self.socket.recv(1024)
-            # print(data)
             if not data:
                 break
             message = self.enc.decrypt_message(data, self.enc.derived_key)
