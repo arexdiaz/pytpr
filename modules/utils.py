@@ -10,6 +10,26 @@ logging.basicConfig(level=logging.INFO)
 
 NO_OUTPUT_SIGNAL = "__INTERNAL__NO_OUTPUT_SIGNAL_123$%^&"
 
+def local_shell(line):
+    if line.startswith('!'):
+        command = line[1:]  # Remove the '!' at the beginning
+        if command.startswith("cd"):
+            folder = command.split(" ")[1]
+            try:
+                os.chdir(folder)
+            except FileNotFoundError:
+                 print(f"cd: {folder} not found")
+            finally:
+                return
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        if stdout:
+            print(stdout.decode().strip())
+        if stderr:
+            print(stderr.decode().strip())
+    else:
+        print('Unknown command: {}'.format(line))
+
 def send_file(file_name, ip, port):
     with open(file_name, "rb") as f:
         binary_data = f.read()
@@ -32,7 +52,7 @@ def chk_payload(project_dir):
     payload_file = os.path.join(payload_dir, "payload")
 
     if os.path.isfile(source_file):
-        logging.info(f"Compiling '{source_file}' using PyInstaller...")
+        logging.info(f"Compiling '{source_file}' using PyInstaller")
 
         try:
             with open(os.devnull, "w") as devnull:

