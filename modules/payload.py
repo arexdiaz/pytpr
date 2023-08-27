@@ -5,6 +5,7 @@ import argparse
 import logging
 import select
 import socket
+import json
 import time
 import os
 
@@ -13,6 +14,42 @@ logging.basicConfig(level=None)
 # Constants
 SENDING_FILE = b"sendingfile"
 GETTING_FILE = b"gettingfile"
+
+def stat_to_dict(stat_obj):
+    return {
+        'st_mode': stat_obj.st_mode,
+        'st_ino': stat_obj.st_ino,
+        'st_dev': stat_obj.st_dev,
+        'st_nlink': stat_obj.st_nlink,
+        'st_uid': stat_obj.st_uid,
+        'st_gid': stat_obj.st_gid,
+        'st_size': stat_obj.st_size,
+        'st_atime': stat_obj.st_atime,
+        'st_mtime': stat_obj.st_mtime,
+        'st_ctime': stat_obj.st_ctime
+    }
+
+def scandir_to_dict(path=None):
+    if not path: path = None
+    entries = os.scandir(path)
+    entries_list = []
+
+    for entry in entries:
+        entry_dict = {
+            'name': entry.name,
+            'path': entry.path,
+            'inode': entry.inode(),
+            'is_dir': entry.is_dir(),
+            'is_file': entry.is_file(),
+            'is_symlink': entry.is_symlink(),
+        }
+        try:
+            entry_dict['stat'] = stat_to_dict(entry.stat())
+        except Exception as e:
+            entry_dict['stat'] = str(e)  # Store any error messages
+        entries_list.append(entry_dict)
+    entries_list = sorted(entries_list, key=lambda x: x['name'])
+    return json.dumps((entries_list)).encode()
 
 class Shell:
     def __init__(self):
@@ -83,6 +120,13 @@ class NetManager:
 
     def handle_file_transfers(self, data):
         """Handles file transfers based on the received data."""
+        params = data.decode().split(" ")
+        if params[0] == "ls":
+            if len(params) == 2:
+                self.send_response(scandir_to_dict(params[1]))
+            elif len(params) == 1:
+                self.send_response(scandir_to_dict())
+            return True
         if data.decode().split(" ")[0] == "cd":
             cmd = data.decode().split(" ")[0]
             folder = data.decode().split(" ")[1]
@@ -136,11 +180,14 @@ class NetManager:
 def main():
     """Main function to parse arguments and start execution."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("host")
-    parser.add_argument("port", type=int)
-
-    # args = parser.parse_args()
-    net_manager = NetManager("localhost", 4242)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--test", action="store_true")
+    args = parser.parse_args()
+    if args.test:
+        print("Hello world! Wasd")
+        return
+    net_manager = NetManager(args.host, args.port)
     net_manager.netloop()
 
 

@@ -9,12 +9,11 @@ import queue
 import json
 import time
 import re
-import os
 
 logging.basicConfig(level=logging.INFO)
 
 ORIGINAL_SIGTSTP = signal.getsignal(signal.SIGTSTP)
-EXIT_CMD = " && echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
+EXIT_CMD = "; echo _3X1T_5TATUS=$? || echo _3X1T_5TATUS=$?\n"
 
 def pretty(s):
     try:
@@ -72,6 +71,25 @@ def listen(host, port, py_state):
 
     return sock
 
+def is_alive(handl):
+    while handl.is_bg:
+        try:
+            data = handl.socket.client_socket.recv(16)
+            if len(data) == 0:
+                raise ConnectionError
+        except BlockingIOError:
+            continue
+        except (ConnectionError, OSError) as e:
+            if handl.is_bg:
+                logging.error(f"Session {handl.id +1}: Connection lost")
+                handl.sock.is_open = False
+                handl.sock.client_socket.close()
+                handl.sock.server_socket.close()
+                break
+        except Exception as e:
+            logging.error(f"Unexpected exception when checking if a socket is closed: {e}")
+            break
+
 def netshell_loop(shellObj):
     signal.signal(signal.SIGTSTP, sig_handler)
 
@@ -97,6 +115,7 @@ def netshell_loop(shellObj):
         return
 
 class KeyboardBgInterrupt(Exception):
+    print("hello world!")
     pass
 
 class BashServerSocket():

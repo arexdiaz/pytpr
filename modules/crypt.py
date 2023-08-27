@@ -20,7 +20,7 @@ class ServerPyEncryption():
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
-        
+
         client.send(server_pub_pem)
 
         # Receive client's public key from the client
