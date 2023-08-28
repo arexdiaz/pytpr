@@ -27,14 +27,10 @@ class RawShell:
         self.socket.client_socket.send(f"export COLUMNS={columns}; export LINES={lines}\n".encode())
         if not pty:
             self.socket.client_socket.send(b"script /dev/null\n")
-            # self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
-            self.socket.client_socket.send(b"echo -n PotatoeMunc > temp_string\n")
-            self.socket.client_socket.send(b"echo -n hkinExit132@@ >> temp_string\n")
-            self.socket.client_socket.send(b"new_str=$(cat temp_string)\n")
-            self.socket.client_socket.send(b"alias exit='echo $new_str'\n")
-            self.socket.client_socket.send(b"rm temp_string\n")
-            self.socket.client_socket.send(b"clear\n")
+            self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
+            # self.socket.client_socket.send(b"clear\n")
         self.socket.client_socket.setblocking(1)
+        data = self.socket.client_socket.recv(1024)
 
     def send_interrupt(self, signum, frame):
         self.socket.client_socket.send(b"\x03")
