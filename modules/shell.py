@@ -30,7 +30,7 @@ class RawShell:
             self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
             # self.socket.client_socket.send(b"clear\n")
         self.socket.client_socket.setblocking(1)
-        data = self.socket.client_socket.recv(1024)
+        data = self.socket.client_socket.recv(8192)
 
     def send_interrupt(self, signum, frame):
         self.socket.client_socket.send(b"\x03")
