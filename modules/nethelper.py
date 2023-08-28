@@ -115,7 +115,6 @@ def netshell_loop(shellObj):
         return
 
 class KeyboardBgInterrupt(Exception):
-    print("hello world!")
     pass
 
 class BashServerSocket():
