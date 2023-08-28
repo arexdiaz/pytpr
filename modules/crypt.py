@@ -25,7 +25,18 @@ class ServerPyEncryption():
 
         # Receive client's public key from the client
         client_public_key_pem = client.recv(1024)
+
+        # data_str = client_public_key_pem.decode('utf-8')  # convert bytes to string
+
+        # # Find the start and end of the public key
+        # start = data_str.find('-----BEGIN PUBLIC KEY-----\n')
+        # end = data_str.find('\n-----END PUBLIC KEY-----\n') + len('\n-----END PUBLIC KEY-----\n')
+
+        # # Extract the public key
+        # client_public_key_pem = data_str[start:end].encode()
+
         client_public_key = serialization.load_pem_public_key(client_public_key_pem)
+        
         # Generate the shared secret
         shared_key = server_pk.exchange(client_public_key)
         return HKDF(

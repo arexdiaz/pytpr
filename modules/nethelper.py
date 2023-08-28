@@ -246,6 +246,7 @@ class PyServerSocket():
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.client_socket = None
         self.client_address = None
+        
 
 
     def listen(self):

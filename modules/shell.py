@@ -12,7 +12,7 @@ def handle_signal(signum, frame):
     raise ConnectionError("Connection lost")
 
 class RawShell:
-    def __init__(self, sock):
+    def __init__(self, sock, pty=False):
         self.socket = sock
         self.send_is_running = True
         self.receive_is_running = True
@@ -25,7 +25,15 @@ class RawShell:
         columns, lines = shutil.get_terminal_size()
 
         self.socket.client_socket.send(f"export COLUMNS={columns}; export LINES={lines}\n".encode())
-        self.socket.client_socket.send(b"script /dev/null\n")
+        if not pty:
+            self.socket.client_socket.send(b"script /dev/null\n")
+            # self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
+            self.socket.client_socket.send(b"echo -n PotatoeMunc > temp_string\n")
+            self.socket.client_socket.send(b"echo -n hkinExit132@@ >> temp_string\n")
+            self.socket.client_socket.send(b"new_str=$(cat temp_string)\n")
+            self.socket.client_socket.send(b"alias exit='echo $new_str'\n")
+            self.socket.client_socket.send(b"rm temp_string\n")
+            self.socket.client_socket.send(b"clear\n")
         self.socket.client_socket.setblocking(1)
 
     def send_interrupt(self, signum, frame):
@@ -42,26 +50,27 @@ class RawShell:
                 if r:
                     data = os.read(0, 1024)
                     if data:
-                        if data.decode() == "\t":
-                            return self.exit()
                         try:
                             self.socket.client_socket.send(data)
                         except:
-                            self.exit(ask=False)
+                            self.exit()
         finally:
             termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
 
     def receive_data(self):
+        test = False
         while self.receive_is_running:
             try:
                 ready_to_read, _, _ = select.select([self.socket.client_socket], [], [], 1)
                 if ready_to_read:
                     data = self.socket.client_socket.recv(1024)
+                    if b"PotatoeMunchkinExit132@@" in data:
+                        self.exit(close=False)
+                        return
                     if not data:
                         raise ConnectionError
                     os.write(1, data)
                 else:
-                    # No data available, socket is still alive
                     continue
             except (ConnectionError, OSError) as e:
                 self.receive_is_running = False
@@ -83,23 +92,13 @@ class RawShell:
         self.receive_thread.join()
         self.send_thread.join()
 
-    def exit(self, ask=True):
+    def exit(self, close=True):
         self.send_is_running = False
         self.receive_is_running = False
-        cur = termios.tcgetattr(sys.stdin.fileno())
         termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
-        if not ask:
+        if close:
             self.socket.client_socket.close()
             self.socket.server_socket.close()
             return
-        response = input("Do you want to put this in the background? (y/n) ")
-        if response.lower() == "y":
-            self.socket.client_socket.send(b"if ! pgrep -f \"script /dev/null\" > /dev/null; then echo -n \"\"; else exit; fi\n")
-        elif response.lower() == "n":
-            termios.tcsetattr(0, termios.TCSADRAIN, cur)
-            self.send_is_running = True
-            self.receive_is_running = True
-            self.send_thread = threading.Thread(target=self.send_data)
-            self.receive_thread = threading.Thread(target=self.receive_data)
-            self.send_thread.start()
-            self.receive_thread.start()
+        else:
+            return
