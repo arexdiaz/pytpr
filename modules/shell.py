@@ -1,3 +1,4 @@
+from concurrent.futures.thread import ThreadPoolExecutor
 from queue import Queue
 import signal
 import select
@@ -14,13 +15,14 @@ def handle_signal(signum, frame):
 class RawShell:
     def __init__(self, sock, pty=False):
         self.socket = sock
-        self.send_is_running = True
-        self.receive_is_running = True
-        self.old_settings = termios.tcgetattr(sys.stdin.fileno())
+        self.is_socket_open = True
+        self.queue = Queue()
         self.send_thread = None
         self.receive_thread = None
-        self.queue = Queue()
+        self.send_is_running = True
+        self.receive_is_running = True
         self.socket.client_socket.settimeout(1)
+        self.old_settings = termios.tcgetattr(sys.stdin.fileno())
 
         columns, lines = shutil.get_terminal_size()
 
@@ -28,7 +30,14 @@ class RawShell:
         if not pty:
             self.socket.client_socket.send(b"script /dev/null\n")
             self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
-            # self.socket.client_socket.send(b"clear\n")
+        self.socket.client_socket.send(b"alias _='echo wababbo@@'\n")
+        while True:
+            data = self.socket.client_socket.recv(1024)
+            if b"alias _='echo wababbo@@'" in data:
+                self.socket.client_socket.send(b"clear\n")
+                break
+                
+            self.socket.client_socket.send(b" ")
         self.socket.client_socket.setblocking(1)
         data = self.socket.client_socket.recv(8192)
 
@@ -49,7 +58,7 @@ class RawShell:
                         try:
                             self.socket.client_socket.send(data)
                         except:
-                            self.exit()
+                            break
         finally:
             termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
 
@@ -60,41 +69,35 @@ class RawShell:
                 ready_to_read, _, _ = select.select([self.socket.client_socket], [], [], 1)
                 if ready_to_read:
                     data = self.socket.client_socket.recv(1024)
-                    if b"PotatoeMunchkinExit132@@" in data:
-                        self.exit(close=False)
-                        return
+                    if b"PotatoeMunchkinExit132@@" in data and not b"alias exit='echo PotatoeMunchkinExit132@@'" in data:
+                        self.send_is_running = False
+                        break
                     if not data:
                         raise ConnectionError
                     os.write(1, data)
                 else:
                     continue
             except (ConnectionError, OSError) as e:
-                self.receive_is_running = False
+                self.send_is_running = False
                 break
             except Exception as e:
                 break
 
     def run(self):
-        self.receive_thread = threading.Thread(target=self.receive_data)
-        self.send_thread = threading.Thread(target=self.send_data)
+        original_sigint = signal.getsignal(signal.SIGINT)
+        original_sigstop = signal.getsignal(signal.SIGTSTP)
 
         signal.signal(signal.SIGINT, self.send_interrupt)
         signal.signal(signal.SIGTSTP, self.send_suspend)
         signal.signal(signal.SIGUSR1, handle_signal)
 
-        self.receive_thread.start()
-        self.send_thread.start()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            executor.submit(self.receive_data)
+            executor.submit(self.send_data)
 
-        self.receive_thread.join()
-        self.send_thread.join()
-
-    def exit(self, close=True):
-        self.send_is_running = False
-        self.receive_is_running = False
         termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
-        if close:
-            self.socket.client_socket.close()
-            self.socket.server_socket.close()
-            return
-        else:
-            return
+        
+        signal.signal(signal.SIGINT, original_sigint)
+        signal.signal(signal.SIGTSTP, original_sigstop)
+
+        return

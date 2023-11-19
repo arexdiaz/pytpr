@@ -162,6 +162,9 @@ class NetManager:
             file = data.decode().split("gettingfile ")[1].strip()
             self.send_file(file)
             return True
+        elif params[0] == "aliv":
+            self.send_response(b"is_alive")
+            return True
         return False
 
     def execute_command(self, data):

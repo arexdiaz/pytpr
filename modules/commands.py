@@ -1,6 +1,6 @@
-from pip._vendor.rich.console import Console
-from pip._vendor.rich import print
-from pip._vendor.rich.table import Table
+from rich import print
+from rich.table import Table
+from rich.console import Console
 import os
 import stat
 import pwd

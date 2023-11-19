@@ -1,6 +1,8 @@
 from modules.crypt import ServerPyEncryption
 
 from modules.utils import NO_OUTPUT_SIGNAL
+from threading import Thread # change this later
+import threading
 import logging
 import select
 import signal
@@ -25,98 +27,6 @@ def pretty(s):
     else:
         return None
 
-def sig_handler(signum, frame):
-    raise KeyboardBgInterrupt
-
-def _sigtspt_check():
-    try:
-        msg = input("Put session in background? (y/n) > ")
-    except (KeyboardInterrupt, KeyboardBgInterrupt):
-        print("")
-        _sigtspt_check()
-    if msg.lower() == "y":
-        return True
-    elif msg.lower() == "n":
-        return False
-    else:
-        _sigtspt_check()
-
-def listen(host, port, py_state):
-    if not py_state:
-        sock = BashServerSocket()
-        logging.info(f"Started listener on {host, port}")
-    else:
-        sock = PyServerSocket()
-
-    try:
-        sock.server_socket.bind((host, int(port)))
-    except socket.error:
-        logging.error("Address already in use")
-        raise 
-    
-
-    try:
-        sock.listen()
-        if not sock.is_shell():
-            logging.error("No shell found")
-            return
-    except KeyboardInterrupt:
-        sock.server_socket.close()
-        print("")
-        return
-    except BrokenPipeError:
-        sock.server_socket.close()
-        logging.error("BrokenPipeError")
-        return
-
-    return sock
-
-def is_alive(handl):
-    while handl.is_bg:
-        try:
-            data = handl.socket.client_socket.recv(16)
-            if len(data) == 0:
-                raise ConnectionError
-        except BlockingIOError:
-            continue
-        except (ConnectionError, OSError) as e:
-            if handl.is_bg:
-                logging.error(f"Session {handl.id +1}: Connection lost")
-                handl.sock.is_open = False
-                handl.sock.client_socket.close()
-                handl.sock.server_socket.close()
-                break
-        except Exception as e:
-            logging.error(f"Unexpected exception when checking if a socket is closed: {e}")
-            break
-
-def netshell_loop(shellObj):
-    signal.signal(signal.SIGTSTP, sig_handler)
-
-    if not shellObj.is_open:
-        signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
-        return
-    
-    try:
-        shellObj.cmdloop()
-    except KeyboardInterrupt:
-        print("")
-        netshell_loop(shellObj)
-    except KeyboardBgInterrupt:
-        print("")
-        msg =_sigtspt_check()
-        if msg:
-            signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
-            return
-        else:
-            netshell_loop(shellObj)
-    except BrokenPipeError:
-        signal.signal(signal.SIGTSTP, ORIGINAL_SIGTSTP)
-        return
-
-class KeyboardBgInterrupt(Exception):
-    pass
-
 class BashServerSocket():
     def __init__(self, sock_type=None):
         if sock_type == None:
@@ -130,18 +40,20 @@ class BashServerSocket():
         self.inputs = [self.server_socket]
         self.outputs = []
         self.message_queues = {}
+        self.server_address, self.server_port = self.server_socket.getsockname()
         self.client_socket = None
         self.client_address = None
 
 
     def listen(self):
-
         self.server_socket.listen()
 
+        logging.info(f"Started listener on {self.server_address, self.server_port}")
         readable, _, _ = select.select(self.inputs, self.outputs, self.inputs)
 
         for s in readable:
             if s is self.server_socket:
+
                 self.client_socket, self.client_address = self.server_socket.accept()
                 logging.info(f"Connection established with {self.client_address[0]}")
 
@@ -242,20 +154,22 @@ class BashServerSocket():
 class PyServerSocket():
     def __init__(self, sock_type=socket.SOCK_STREAM):
         self.server_socket = socket.socket(socket.AF_INET, sock_type)
+        self.server_address, self.server_port = self.server_socket.getsockname()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.client_socket = None
         self.client_address = None
-        
-
+        self.is_open = True
+        self.lock = threading.Lock()
 
     def listen(self):
+        logging.info(f"Started listener on {self.server_address, self.server_port}")
         self.server_socket.listen(1)
         self.client_socket, self.client_address = self.server_socket.accept()
         logging.debug(f"Connection established with {self.client_address}")
 
     def is_shell(self):
         logging.debug("Validating if connection is from payload")
-        self.client_socket.sendall(b"echo pluh")
+        self.client_socket.sendall(b"echo pluh") # Change this later
         check = pretty(self.client_socket.recv(1024))
         if check:
             logging.info("Initializing interpreter")
@@ -267,23 +181,25 @@ class PyServerSocket():
             return False
 
     def send_command(self, command):
-        chunk = b""
-        derived_key = self.crypto.get_derived_key(self.client_socket)
+        with self.lock:
+            chunk = b""
+            derived_key = self.crypto.get_derived_key(self.client_socket)
 
-        encrypted_message = self.crypto.encrypt_message(command, derived_key)
+            encrypted_message = self.crypto.encrypt_message(command, derived_key)
+            
+            self.client_socket.sendall(encrypted_message)
+            data_length_bytes = self.client_socket.recv(4)
+            data_length = int.from_bytes(data_length_bytes, byteorder="big")
+            data_bytes = bytearray()
 
-        self.client_socket.sendall(encrypted_message)
-        data_length_bytes = self.client_socket.recv(4)
-        data_length = int.from_bytes(data_length_bytes, byteorder="big")
-        data_bytes = bytearray()
+            while len(data_bytes) < data_length:
+                chunk = self.client_socket.recv(data_length - len(data_bytes))
+                if chunk == b"":
+                    raise RuntimeError("socket connection broken")
+                data_bytes.extend(chunk)
 
-        while len(data_bytes) < data_length:
-            chunk = self.client_socket.recv(data_length - len(data_bytes))
-            if chunk == b"":
-                raise RuntimeError("socket connection broken")
-            data_bytes.extend(chunk)
 
-        return self.crypto.decrypt_message(chunk, derived_key)
+            return self.crypto.decrypt_message(chunk, derived_key)
 
     def close(self):
         self.client_socket.close()
