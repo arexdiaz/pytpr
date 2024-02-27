@@ -276,7 +276,6 @@ class LocalShell(cmd.Cmd):
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
 
-        # TODO: Make it so that if there 
         if not raw_shell:
             try:
                 logging.info(f"Sending payload")
