@@ -32,7 +32,6 @@ def _colorize_permissions(permissions):
     return colored_permissions
 
 def ls(data):
-    console = Console()
     # items = sorted(os.scandir(path), key=lambda item: item.name)
 
 
@@ -59,7 +58,7 @@ def ls(data):
             f"[{file_color}]{item['name']}[/{file_color}]",
         )
 
-    console.print(table)
+    return table
 
 def do_ls(self, line):
     if not line:

