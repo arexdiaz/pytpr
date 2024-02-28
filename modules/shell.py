@@ -26,7 +26,8 @@ class RawShell:
 
         columns, lines = shutil.get_terminal_size()
 
-        self.socket.client_socket.send(f"export COLUMNS={columns}; export LINES={lines}\n".encode())
+        self.socket.client_socket.send(f"export TERM=xterm;export COLUMNS={columns}; export LINES={lines}\n".encode())
+
         if not pty:
             self.socket.client_socket.send(b"script /dev/null\n")
             self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")
@@ -71,6 +72,7 @@ class RawShell:
                     data = self.socket.client_socket.recv(1024)
                     if b"PotatoeMunchkinExit132@@" in data and not b"alias exit='echo PotatoeMunchkinExit132@@'" in data:
                         self.send_is_running = False
+                        self.socket.client_socket.send(b"1")
                         break
                     if not data:
                         raise ConnectionError
@@ -84,20 +86,21 @@ class RawShell:
                 break
 
     def run(self):
-        original_sigint = signal.getsignal(signal.SIGINT)
-        original_sigstop = signal.getsignal(signal.SIGTSTP)
+        with self.socket.lock:
+            original_sigint = signal.getsignal(signal.SIGINT)
+            original_sigstop = signal.getsignal(signal.SIGTSTP)
 
-        signal.signal(signal.SIGINT, self.send_interrupt)
-        signal.signal(signal.SIGTSTP, self.send_suspend)
-        signal.signal(signal.SIGUSR1, handle_signal)
+            signal.signal(signal.SIGINT, self.send_interrupt)
+            signal.signal(signal.SIGTSTP, self.send_suspend)
+            signal.signal(signal.SIGUSR1, handle_signal)
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            executor.submit(self.receive_data)
-            executor.submit(self.send_data)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                executor.submit(self.receive_data)
+                executor.submit(self.send_data)
 
-        termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
-        
-        signal.signal(signal.SIGINT, original_sigint)
-        signal.signal(signal.SIGTSTP, original_sigstop)
+            termios.tcsetattr(0, termios.TCSADRAIN, self.old_settings)
+            
+            signal.signal(signal.SIGINT, original_sigint)
+            signal.signal(signal.SIGTSTP, original_sigstop)
 
         return
