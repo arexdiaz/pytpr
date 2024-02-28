@@ -26,7 +26,8 @@ class RawShell:
 
         columns, lines = shutil.get_terminal_size()
 
-        self.socket.client_socket.send(f"export COLUMNS={columns}; export LINES={lines}\n".encode())
+        self.socket.client_socket.send(f"export TERM=xterm;export COLUMNS={columns}; export LINES={lines}\n".encode())
+
         if not pty:
             self.socket.client_socket.send(b"script /dev/null\n")
             self.socket.client_socket.send(b"alias exit='echo PotatoeMunchkinExit132@@'\n")

