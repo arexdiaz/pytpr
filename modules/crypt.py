@@ -53,8 +53,10 @@ class ServerPyEncryption():
         encryptor = cipher.encryptor()
 
         # Encrypt the message and get the tag
+        if type(message) != bytes:
+            message = message.encode()
         padder = padding.PKCS7(128).padder()
-        padded_message = padder.update(message.encode()) + padder.finalize()
+        padded_message = padder.update(message) + padder.finalize()
         ciphertext = encryptor.update(padded_message) + encryptor.finalize()
         tag = encryptor.tag
         message = iv + ciphertext + tag
@@ -108,18 +110,22 @@ class ClientPyEncryption():
                 info=b'handshake data',
             ).derive(shared_key)
 
-    def encrypt_message(self, data, derived_key):
-            iv = os.urandom(12)
-            cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv), backend=default_backend())
-            encryptor = cipher.encryptor()
-            padder = padding.PKCS7(128).padder()
-            padded_message = padder.update(data) + padder.finalize()
-            ciphertext = encryptor.update(padded_message) + encryptor.finalize()
-            tag = encryptor.tag
-            message = iv + ciphertext + tag
-            message_length = len(message)
-            
-            return message_length, message
+    def encrypt_message(self, message, derived_key):
+        iv = os.urandom(12)
+        cipher = Cipher(algorithms.AES(derived_key), modes.GCM(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+
+        # Encrypt the message and get the tag
+        if type(message) != bytes:
+            message = message.encode()
+        padder = padding.PKCS7(128).padder()
+        padded_message = padder.update(message) + padder.finalize()
+        ciphertext = encryptor.update(padded_message) + encryptor.finalize()
+        tag = encryptor.tag
+        message = iv + ciphertext + tag
+        message_length = len(message)
+        
+        return message_length, message
 
     def decrypt_message(self, data, derived_key):
         iv = data[:12]  # GCM uses a 12-byte IV

